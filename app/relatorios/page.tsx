@@ -140,6 +140,10 @@ export default function RelatoriosPage() {
   const [form, setForm] = useState<FormState>(DEFAULT_FORM)
   const [saving, setSaving] = useState(false)
 
+  const [pdfManualOpen, setPdfManualOpen] = useState(false)
+  const [pdfManualForm, setPdfManualForm] = useState<FormState>(DEFAULT_FORM)
+  const [pdfManualBuilding, setPdfManualBuilding] = useState(false)
+
   const [sendingId, setSendingId] = useState<string | null>(null)
   const [pdfId, setPdfId] = useState<string | null>(null)
   const [toast, setToast] = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
@@ -286,6 +290,53 @@ export default function RelatoriosPage() {
     }
   }
 
+  function openPdfManual() {
+    setPdfManualForm({
+      ...DEFAULT_FORM,
+      name: 'Relatório avulso',
+      // pré-seleciona todos os indicadores quando for resumo
+      indicators: indicators.map(i => i.slug),
+    })
+    setPdfManualOpen(true)
+  }
+
+  async function handleGenerateManualPdf() {
+    if (!pdfManualForm.name.trim()) return showToast('error', 'Informe um título para o PDF.')
+    if (pdfManualForm.report_type === 'summary' && pdfManualForm.indicators.length === 0) {
+      return showToast('error', 'Selecione ao menos um indicador.')
+    }
+    setPdfManualBuilding(true)
+    try {
+      const cfg: PdfReportConfig = {
+        id: 'manual',
+        name: pdfManualForm.name.trim(),
+        recipient_whatsapp: '',
+        frequency: 'daily',
+        send_time: '08:00',
+        send_day: null,
+        indicators: pdfManualForm.indicators,
+        ward_ids: pdfManualForm.ward_ids,
+        period: pdfManualForm.period,
+        include_targets: pdfManualForm.include_targets,
+        include_ranking: pdfManualForm.include_ranking,
+        is_active: false,
+        report_type: pdfManualForm.report_type,
+        nominal_source: pdfManualForm.report_type === 'nominal' ? pdfManualForm.nominal_source : null,
+        age_min: pdfManualForm.age_min ? Number(pdfManualForm.age_min) : null,
+        age_max: pdfManualForm.age_max ? Number(pdfManualForm.age_max) : null,
+        gender_filter: pdfManualForm.gender_filter,
+      }
+      const doc = await buildReportPdf(supabase, cfg)
+      doc.save(safeFileName(cfg.name))
+      showToast('ok', 'PDF gerado!')
+      setPdfManualOpen(false)
+    } catch (err) {
+      showToast('error', err instanceof Error ? err.message : 'Erro ao gerar PDF')
+    } finally {
+      setPdfManualBuilding(false)
+    }
+  }
+
   // ═══════════════════════════════════════
   // RENDER
   // ═══════════════════════════════════════
@@ -316,13 +367,23 @@ export default function RelatoriosPage() {
             ⚠️ No plano atual, o envio acontece 1x/dia às 08:00 (America/Sao_Paulo). O horário configurado é informativo.
           </p>
         </div>
-        <button
-          onClick={openNew}
-          className="inline-flex items-center gap-2 px-4 py-2.5 bg-sky-600 hover:bg-sky-700 text-white font-semibold rounded-xl shadow-sm transition-colors"
-        >
-          <Plus size={18} />
-          Novo Relatório
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={openPdfManual}
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl shadow-sm transition-colors"
+            title="Gera um PDF agora com filtros customizados, sem precisar salvar."
+          >
+            <FileDown size={18} />
+            Gerar PDF
+          </button>
+          <button
+            onClick={openNew}
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-sky-600 hover:bg-sky-700 text-white font-semibold rounded-xl shadow-sm transition-colors"
+          >
+            <Plus size={18} />
+            Novo Relatório
+          </button>
+        </div>
       </div>
 
       {/* Listagem */}
@@ -334,13 +395,21 @@ export default function RelatoriosPage() {
         <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-10 text-center">
           <Bell className="w-12 h-12 text-sky-300 mx-auto mb-3" />
           <h3 className="text-lg font-semibold text-gray-800">Nenhum relatório configurado ainda</h3>
-          <p className="text-sm text-gray-500 mt-1">Crie seu primeiro relatório para enviar indicadores automaticamente.</p>
-          <button
-            onClick={openNew}
-            className="mt-5 inline-flex items-center gap-2 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white font-semibold rounded-xl"
-          >
-            <Plus size={18} /> Criar Relatório
-          </button>
+          <p className="text-sm text-gray-500 mt-1">Crie um envio automático ou gere um PDF na hora.</p>
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            <button
+              onClick={openPdfManual}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl"
+            >
+              <FileDown size={18} /> Gerar PDF agora
+            </button>
+            <button
+              onClick={openNew}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white font-semibold rounded-xl"
+            >
+              <Plus size={18} /> Criar Relatório
+            </button>
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -362,7 +431,7 @@ export default function RelatoriosPage() {
         </div>
       )}
 
-      {/* Modal */}
+      {/* Modal — criar/editar relatório agendado */}
       {modalOpen && (
         <ReportModal
           form={form}
@@ -372,6 +441,20 @@ export default function RelatoriosPage() {
           saving={saving}
           onClose={() => setModalOpen(false)}
           onSave={handleSave}
+        />
+      )}
+
+      {/* Modal — gerar PDF avulso (sem salvar) */}
+      {pdfManualOpen && (
+        <ReportModal
+          form={pdfManualForm}
+          setForm={setPdfManualForm}
+          wards={wards}
+          indicators={indicators}
+          saving={pdfManualBuilding}
+          onClose={() => setPdfManualOpen(false)}
+          onSave={handleGenerateManualPdf}
+          pdfMode
         />
       )}
     </div>
@@ -532,7 +615,7 @@ function ReportCard({
 // ═══════════════════════════════════════
 
 function ReportModal({
-  form, setForm, wards, indicators, saving, onClose, onSave,
+  form, setForm, wards, indicators, saving, onClose, onSave, pdfMode = false,
 }: {
   form: FormState
   setForm: (f: FormState) => void
@@ -541,6 +624,7 @@ function ReportModal({
   saving: boolean
   onClose: () => void
   onSave: () => void
+  pdfMode?: boolean
 }) {
   const toggleIndicator = (slug: string) => {
     setForm({
@@ -566,7 +650,7 @@ function ReportModal({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <h2 className="text-lg font-bold text-gray-900">
-            {form.id ? 'Editar Relatório' : 'Novo Relatório'}
+            {pdfMode ? 'Gerar PDF Avulso' : form.id ? 'Editar Relatório' : 'Novo Relatório'}
           </h2>
           <button onClick={onClose} className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg">
             <X size={18} />
@@ -605,28 +689,31 @@ function ReportModal({
           </Field>
 
           {/* Nome + Whatsapp */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="Nome do relatório">
+          <div className={`grid grid-cols-1 ${pdfMode ? '' : 'md:grid-cols-2'} gap-4`}>
+            <Field label={pdfMode ? 'Título do PDF' : 'Nome do relatório'}>
               <input
                 type="text"
                 value={form.name}
                 onChange={e => setForm({ ...form, name: e.target.value })}
-                placeholder="Ex: Resumo semanal estaca"
+                placeholder={pdfMode ? 'Ex: Relatório de batismos — abril' : 'Ex: Resumo semanal estaca'}
                 className="input"
               />
             </Field>
-            <Field label="WhatsApp (com DDI)">
-              <input
-                type="text"
-                value={form.recipient_whatsapp}
-                onChange={e => setForm({ ...form, recipient_whatsapp: e.target.value })}
-                placeholder="5551999990000"
-                className="input font-mono"
-              />
-            </Field>
+            {!pdfMode && (
+              <Field label="WhatsApp (com DDI)">
+                <input
+                  type="text"
+                  value={form.recipient_whatsapp}
+                  onChange={e => setForm({ ...form, recipient_whatsapp: e.target.value })}
+                  placeholder="5551999990000"
+                  className="input font-mono"
+                />
+              </Field>
+            )}
           </div>
 
-          {/* Frequência + horário + dia */}
+          {/* Frequência + horário + dia (só no modo agendado) */}
+          {!pdfMode && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Field label="Frequência">
               <select
@@ -674,6 +761,7 @@ function ReportModal({
             )}
             {form.frequency === 'daily' && <div />}
           </div>
+          )}
 
           {/* Período */}
           <Field label="Período dos dados">
@@ -838,15 +926,17 @@ function ReportModal({
                 </label>
               </>
             )}
-            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={form.is_active}
-                onChange={e => setForm({ ...form, is_active: e.target.checked })}
-                className="accent-sky-600 w-4 h-4"
-              />
-              Ativo (envio automático)
-            </label>
+            {!pdfMode && (
+              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.is_active}
+                  onChange={e => setForm({ ...form, is_active: e.target.checked })}
+                  className="accent-sky-600 w-4 h-4"
+                />
+                Ativo (envio automático)
+              </label>
+            )}
           </div>
         </div>
 
@@ -861,10 +951,12 @@ function ReportModal({
           <button
             onClick={onSave}
             disabled={saving}
-            className="inline-flex items-center gap-2 px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl font-semibold text-sm disabled:opacity-60"
+            className={`inline-flex items-center gap-2 px-5 py-2 ${pdfMode ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-sky-600 hover:bg-sky-700'} text-white rounded-xl font-semibold text-sm disabled:opacity-60`}
           >
-            {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-            {saving ? 'Salvando...' : 'Salvar'}
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : pdfMode ? <FileDown size={16} /> : null}
+            {pdfMode
+              ? (saving ? 'Gerando PDF...' : 'Gerar PDF')
+              : (saving ? 'Salvando...' : 'Salvar')}
           </button>
         </div>
       </div>
