@@ -264,10 +264,6 @@ export default function LancamentosPage() {
     ? INDICATOR_LINKS[selectedSlug]?.(selectedWard.name) ?? null
     : null
 
-  // Iframe inline do link do site da Igreja (pode ser bloqueado por X-Frame-Options)
-  const [showFrame, setShowFrame] = useState(true)
-  useEffect(() => { setShowFrame(true) }, [quickLink])
-
   // Reset ao mudar ala ou indicador
   useEffect(() => {
     setFormError(null)
@@ -283,23 +279,34 @@ export default function LancamentosPage() {
   // ─── Carregar nomes existentes (batismo/retornando) ───
   useEffect(() => {
     async function loadExisting() {
-      if (!wardId || !weekStart) return
+      if (!isBatismo && !isRetornando) return
+      if (!wardId || !weekStart) {
+        setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
+        return
+      }
 
       if (isBatismo) {
-        const { data } = await supabase.rpc('get_baptism_names', { p_ward_id: wardId, p_week_start: weekStart })
+        const { data, error } = await supabase.rpc('get_baptism_names', { p_ward_id: wardId, p_week_start: weekStart })
+        if (error) console.warn('get_baptism_names:', error.message)
         if (data && data.length > 0) {
           setNominalPersons(data.map((d: any) => ({
             name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || '',
             baptism_date: d.baptism_date || '',
           })))
+        } else {
+          // sem registros nesta combinação ala/data — limpa o formulário
+          setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
         }
       } else if (isRetornando) {
-        const { data } = await supabase.rpc('get_returning_names', { p_ward_id: wardId, p_week_start: weekStart })
+        const { data, error } = await supabase.rpc('get_returning_names', { p_ward_id: wardId, p_week_start: weekStart })
+        if (error) console.warn('get_returning_names:', error.message)
         if (data && data.length > 0) {
           setNominalPersons(data.map((d: any) => ({
             name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || '',
             baptism_date: '',
           })))
+        } else {
+          setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
         }
       }
     }
@@ -983,45 +990,57 @@ export default function LancamentosPage() {
                   </div>
                 </div>
 
-                {/* Quick Link — iframe inline do site da Igreja */}
+                {/* Quick Link — janela lateral do site da Igreja
+                    O site da Igreja bloqueia embed via CSP (frame-ancestors 'self'),
+                    então abrimos um popup posicionado à direita da tela. */}
                 {quickLink && (
                   <div className="bg-sky-50 border border-sky-100 rounded-2xl overflow-hidden animate-in fade-in slide-in-from-top-2">
-                    <div className="flex items-center gap-3 p-3">
+                    <div className="flex flex-wrap items-center gap-2 p-3">
                       <BookOpen size={18} className="text-sky-600 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-bold text-sky-800">Site da Igreja (inline)</p>
+                      <div className="flex-1 min-w-[180px]">
+                        <p className="text-xs font-bold text-sky-800">Site da Igreja</p>
                         <p className="text-[10px] text-sky-600 truncate">{quickLink}</p>
                       </div>
                       <button
                         type="button"
-                        onClick={() => setShowFrame(v => !v)}
-                        className="shrink-0 px-2.5 py-1.5 bg-white border border-sky-200 text-sky-700 text-xs font-bold rounded-lg hover:bg-sky-100 transition-all"
+                        onClick={() => {
+                          if (!quickLink) return
+                          const w = 520
+                          const h = Math.max(700, window.screen.availHeight - 80)
+                          const left = Math.max(0, window.screen.availWidth - w - 20)
+                          const top = 40
+                          window.open(
+                            quickLink,
+                            'igreja_painel',
+                            `popup=yes,width=${w},height=${h},left=${left},top=${top},noopener`
+                          )
+                        }}
+                        className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 text-white text-xs font-bold rounded-lg hover:bg-sky-700 transition-all"
+                        title="Abre uma janela menor à direita da tela para você consultar enquanto lança"
                       >
-                        {showFrame ? 'Ocultar' : 'Mostrar'}
+                        <ExternalLink size={14} /> Abrir lateral
                       </button>
                       <button
                         type="button"
                         onClick={() => window.open(quickLink, '_blank', 'noopener')}
-                        className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 text-white text-xs font-bold rounded-lg hover:bg-sky-700 transition-all"
+                        className="shrink-0 px-2.5 py-1.5 bg-white border border-sky-200 text-sky-700 text-xs font-bold rounded-lg hover:bg-sky-100 transition-all"
                       >
-                        <ExternalLink size={14} /> Nova aba
+                        Nova aba
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try { await navigator.clipboard.writeText(quickLink); setToast({ type: 'success', text: 'Link copiado!' }) }
+                          catch { setToast({ type: 'error', text: 'Não foi possível copiar.' }) }
+                        }}
+                        className="shrink-0 px-2.5 py-1.5 bg-white border border-sky-200 text-sky-700 text-xs font-bold rounded-lg hover:bg-sky-100 transition-all"
+                      >
+                        Copiar
                       </button>
                     </div>
-                    {showFrame && (
-                      <div className="border-t border-sky-100 bg-white">
-                        <iframe
-                          src={quickLink}
-                          className="w-full"
-                          style={{ height: '600px', border: 'none' }}
-                          referrerPolicy="no-referrer-when-downgrade"
-                          sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
-                          title="Site da Igreja"
-                        />
-                        <p className="text-[10px] text-amber-700 bg-amber-50 border-t border-amber-200 px-3 py-2">
-                          ⚠️ Se o quadro ficar em branco, o site da Igreja bloqueia carregamento embutido. Use o botão <strong>Nova aba</strong>.
-                        </p>
-                      </div>
-                    )}
+                    <p className="text-[10px] text-sky-700 bg-sky-100/60 border-t border-sky-100 px-3 py-2 leading-relaxed">
+                      💡 Use <strong>Abrir lateral</strong> para uma mini-janela ao lado dos lançamentos. (O site da Igreja bloqueia incorporação direta na página, por política de segurança deles.)
+                    </p>
                   </div>
                 )}
 

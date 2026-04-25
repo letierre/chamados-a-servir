@@ -4,8 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '../../lib/supabase/client'
 import {
   Bell, Plus, Pencil, Trash2, Send, Power, PowerOff,
-  X, Loader2, CheckCircle2, AlertCircle, Clock, Calendar, MessageSquare,
+  X, Loader2, CheckCircle2, AlertCircle, Clock, Calendar, MessageSquare, FileDown,
 } from 'lucide-react'
+import { buildReportPdf, safeFileName } from '../../lib/relatorios/build-pdf'
+import type { ReportConfig as PdfReportConfig } from '../../lib/relatorios/build-message'
 
 // ═══════════════════════════════════════
 // TIPOS
@@ -139,6 +141,7 @@ export default function RelatoriosPage() {
   const [saving, setSaving] = useState(false)
 
   const [sendingId, setSendingId] = useState<string | null>(null)
+  const [pdfId, setPdfId] = useState<string | null>(null)
   const [toast, setToast] = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
 
   const showToast = useCallback((type: 'ok' | 'error', text: string) => {
@@ -270,6 +273,19 @@ export default function RelatoriosPage() {
     }
   }
 
+  async function handleDownloadPdf(cfg: ReportConfig) {
+    setPdfId(cfg.id)
+    try {
+      const doc = await buildReportPdf(supabase, cfg as unknown as PdfReportConfig)
+      doc.save(safeFileName(cfg.name))
+      showToast('ok', 'PDF gerado!')
+    } catch (err) {
+      showToast('error', err instanceof Error ? err.message : 'Erro ao gerar PDF')
+    } finally {
+      setPdfId(null)
+    }
+  }
+
   // ═══════════════════════════════════════
   // RENDER
   // ═══════════════════════════════════════
@@ -335,10 +351,12 @@ export default function RelatoriosPage() {
               indicators={indicators}
               wards={wards}
               sending={sendingId === cfg.id}
+              generatingPdf={pdfId === cfg.id}
               onEdit={() => openEdit(cfg)}
               onDelete={() => handleDelete(cfg)}
               onToggle={() => handleToggleActive(cfg)}
               onSend={() => handleSendNow(cfg)}
+              onDownloadPdf={() => handleDownloadPdf(cfg)}
             />
           ))}
         </div>
@@ -365,17 +383,19 @@ export default function RelatoriosPage() {
 // ═══════════════════════════════════════
 
 function ReportCard({
-  cfg, indicators, wards, sending,
-  onEdit, onDelete, onToggle, onSend,
+  cfg, indicators, wards, sending, generatingPdf,
+  onEdit, onDelete, onToggle, onSend, onDownloadPdf,
 }: {
   cfg: ReportConfig
   indicators: Indicator[]
   wards: Ward[]
   sending: boolean
+  generatingPdf: boolean
   onEdit: () => void
   onDelete: () => void
   onToggle: () => void
   onSend: () => void
+  onDownloadPdf: () => void
 }) {
   const indicatorNames = cfg.indicators
     .map(slug => indicators.find(i => i.slug === slug)?.display_name)
@@ -466,11 +486,20 @@ function ReportCard({
       <div className="mt-4 flex items-center gap-2">
         <button
           onClick={onSend}
-          disabled={sending}
+          disabled={sending || generatingPdf}
           className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-sky-600 hover:bg-sky-700 text-white text-sm font-semibold rounded-lg disabled:opacity-60"
         >
           {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send size={14} />}
           {sending ? 'Enviando' : 'Enviar agora'}
+        </button>
+        <button
+          onClick={onDownloadPdf}
+          disabled={sending || generatingPdf}
+          className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg disabled:opacity-60"
+          title="Gerar e baixar PDF deste relatório"
+        >
+          {generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown size={14} />}
+          PDF
         </button>
         <button
           onClick={onToggle}
