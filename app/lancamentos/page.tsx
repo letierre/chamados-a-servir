@@ -112,11 +112,15 @@ type SkipWeek = {
 }
 
 // Tipo para pessoa nominal (batismo/retornando)
+// id e week_start_record só existem quando a linha foi carregada do banco;
+// linhas novas (id undefined) usam o weekStart selecionado no formulário no save.
 type NominalPerson = {
+  id?: string
   name: string
   birth_date: string
   gender: string
   baptism_date: string
+  week_start_record?: string
 }
 
 // Tipo para missionário
@@ -321,19 +325,20 @@ export default function LancamentosPage() {
   }, [isMembrosParticipantes, wardId, weekStart, supabase])
 
   // ─── Carregar nomes existentes (batismo/retornando) ───
-  // Vai direto na tabela em vez de RPC — RLS já libera SELECT para autenticados
-  // e fica resiliente caso a função RPC esteja desatualizada.
+  // Lista é da ala inteira, não de uma semana. Cada linha guarda sua própria
+  // week_start (e id) para que o save reconcilie semana-a-semana sem perder
+  // o histórico das outras semanas.
   useEffect(() => {
     async function loadExisting() {
       if (!isBatismo && !isRetornando) return
-      if (!wardId || !weekStart) return
+      if (!wardId) return
 
       if (isBatismo) {
         const { data, error } = await supabase
           .from('baptism_records')
-          .select('person_name, birth_date, gender, baptism_date')
+          .select('id, person_name, birth_date, gender, baptism_date, week_start')
           .eq('ward_id', wardId)
-          .eq('week_start', weekStart)
+          .order('week_start', { ascending: false })
           .order('person_name')
         if (error) {
           setFormError(`Falha ao buscar batismos existentes: ${error.message}`)
@@ -341,8 +346,10 @@ export default function LancamentosPage() {
         }
         if (data && data.length > 0) {
           setNominalPersons(data.map(d => ({
+            id: d.id,
             name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || '',
             baptism_date: d.baptism_date || '',
+            week_start_record: d.week_start,
           })))
           nominalDirtyRef.current = false
           setNominalLoadedFromDb(true)
@@ -353,9 +360,9 @@ export default function LancamentosPage() {
       } else if (isRetornando) {
         const { data, error } = await supabase
           .from('returning_member_records')
-          .select('person_name, birth_date, gender')
+          .select('id, person_name, birth_date, gender, week_start')
           .eq('ward_id', wardId)
-          .eq('week_start', weekStart)
+          .order('week_start', { ascending: false })
           .order('person_name')
         if (error) {
           setFormError(`Falha ao buscar retornando existentes: ${error.message}`)
@@ -363,8 +370,10 @@ export default function LancamentosPage() {
         }
         if (data && data.length > 0) {
           setNominalPersons(data.map(d => ({
+            id: d.id,
             name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || '',
             baptism_date: '',
+            week_start_record: d.week_start,
           })))
           nominalDirtyRef.current = false
           setNominalLoadedFromDb(true)
@@ -375,7 +384,7 @@ export default function LancamentosPage() {
       }
     }
     loadExisting()
-  }, [isBatismo, isRetornando, wardId, weekStart, supabase])
+  }, [isBatismo, isRetornando, wardId, supabase])
 
   // ─── Carregar missionários existentes ───
   useEffect(() => {
@@ -464,6 +473,8 @@ export default function LancamentosPage() {
   // ─── Helpers nominais ───
   function addNominalPerson() {
     nominalDirtyRef.current = true
+    // Linha nova fica sem id e sem week_start_record; será atribuída ao
+    // weekStart selecionado no save.
     setNominalPersons(prev => [...prev, { name: '', birth_date: '', gender: '', baptism_date: '' }])
   }
   function removeNominalPerson(i: number) {
@@ -568,73 +579,100 @@ export default function LancamentosPage() {
       const { data: session } = await supabase.auth.getSession()
       const userId = session.session?.user?.id
 
-      // ─── CASO BATISMO NOMINAL ───
-      if (isBatismo) {
-        if (!wardId || !weekStart) { setFormError('Selecione ala e data.'); return }
-        const dateErr = validateForm(0, weekStart)
-        if (dateErr && dateErr !== 'Valor deve ser positivo.') { setFormError(dateErr); return }
-
+      // ─── BATISMO / RETORNANDO NOMINAL ───
+      // A lista é da ala inteira. Cada linha do form aponta para a sua semana
+      // (week_start_record); linhas novas usam o weekStart selecionado.
+      // Salva reconciliando semana-a-semana: para cada semana afetada,
+      // delete-all + insert-all + upsert weekly_indicator_data.
+      if (isBatismo || isRetornando) {
+        if (!wardId) { setFormError('Selecione uma ala.'); return }
         const validPersons = nominalPersons.filter(p => p.name.trim().length >= 2)
-        if (validPersons.length === 0) { setFormError('Adicione pelo menos um nome (mínimo 2 caracteres).'); return }
+        // Ao menos uma linha precisa de semana válida (existente ou via weekStart selecionado)
+        const hasNewRow = validPersons.some(p => !p.id)
+        if (hasNewRow && !weekStart) {
+          setFormError('Para adicionar nomes novos, selecione o domingo de referência.')
+          return
+        }
+        if (hasNewRow) {
+          const dateErr = validateForm(0, weekStart)
+          if (dateErr && dateErr !== 'Valor deve ser positivo.') { setFormError(dateErr); return }
+        }
 
-        // Delete + insert nomes
-        await supabase.from('baptism_records').delete().eq('ward_id', wardId).eq('week_start', weekStart)
-        const { error: bErr } = await supabase.from('baptism_records').insert(
-          validPersons.map(p => ({
-            ward_id: wardId, week_start: weekStart, person_name: p.name.trim(),
-            birth_date: p.birth_date || null, gender: p.gender || null,
-            baptism_date: p.baptism_date || weekStart,
-            created_by: userId,
-          }))
-        )
-        if (bErr) { setFormError('Erro ao salvar nomes: ' + bErr.message); return }
+        const tableName = isBatismo ? 'baptism_records' : 'returning_member_records'
+        const recordLabel = isBatismo ? 'batismo' : 'membro retornando'
 
-        // Upsert contagem
-        await supabase.from('weekly_indicator_data').delete()
-          .eq('ward_id', wardId).eq('indicator_id', indicatorId).eq('week_start', weekStart)
-        const { error: wErr } = await supabase.from('weekly_indicator_data').insert({
-          ward_id: wardId, indicator_id: indicatorId, value: validPersons.length,
-          week_start: weekStart, source: 'manual', created_by: userId,
-        })
-        if (wErr) { setFormError('Erro ao salvar contagem: ' + wErr.message); return }
+        // Coleta semanas afetadas: dos registros do form + de TODAS as linhas
+        // originais carregadas (para detectar removidos)
+        const weeksAffected = new Set<string>()
+        for (const p of validPersons) {
+          const w = p.id ? p.week_start_record : weekStart
+          if (w) weeksAffected.add(w)
+        }
+        for (const p of nominalPersons) {
+          if (p.id && p.week_start_record) weeksAffected.add(p.week_start_record)
+        }
 
-        setToast({ type: 'success', text: `${validPersons.length} batismo(s) registrado(s)!` })
-        setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
+        // Para cada semana, decide quais linhas pertencem a ela e reescreve.
+        for (const week of weeksAffected) {
+          const personsForWeek = validPersons.filter(p => {
+            const rowWeek = p.id ? p.week_start_record : weekStart
+            return rowWeek === week
+          })
+
+          // Deleta tudo daquela ala+semana
+          const { error: delErr } = await supabase.from(tableName)
+            .delete().eq('ward_id', wardId).eq('week_start', week)
+          if (delErr) { setFormError(`Erro ao limpar ${recordLabel}s da semana ${week}: ${delErr.message}`); return }
+
+          // Insere as linhas atuais para essa semana (se houver)
+          if (personsForWeek.length > 0) {
+            const insertRows = personsForWeek.map(p => {
+              const base: Record<string, unknown> = {
+                ward_id: wardId, week_start: week, person_name: p.name.trim(),
+                birth_date: p.birth_date || null, gender: p.gender || null, created_by: userId,
+              }
+              if (isBatismo) base.baptism_date = p.baptism_date || week
+              return base
+            })
+            const { error: insErr } = await supabase.from(tableName).insert(insertRows)
+            if (insErr) { setFormError(`Erro ao salvar ${recordLabel}s: ${insErr.message}`); return }
+          }
+
+          // Reconcilia weekly_indicator_data: deleta e (se há registros) reinsere
+          await supabase.from('weekly_indicator_data').delete()
+            .eq('ward_id', wardId).eq('indicator_id', indicatorId).eq('week_start', week)
+          if (personsForWeek.length > 0) {
+            const { error: wErr } = await supabase.from('weekly_indicator_data').insert({
+              ward_id: wardId, indicator_id: indicatorId, value: personsForWeek.length,
+              week_start: week, source: 'manual', created_by: userId,
+            })
+            if (wErr) { setFormError(`Erro ao salvar contagem da semana ${week}: ${wErr.message}`); return }
+          }
+        }
+
+        setToast({ type: 'success', text: `${validPersons.length} ${recordLabel}(s) registrado(s) na ala!` })
         nominalDirtyRef.current = false
-        await fetchRecentEntries()
-        await loadWeeklyStatus()
-        return
-      }
-
-      // ─── CASO RETORNANDO NOMINAL ───
-      if (isRetornando) {
-        if (!wardId || !weekStart) { setFormError('Selecione ala e data.'); return }
-        const dateErr = validateForm(0, weekStart)
-        if (dateErr && dateErr !== 'Valor deve ser positivo.') { setFormError(dateErr); return }
-
-        const validPersons = nominalPersons.filter(p => p.name.trim().length >= 2)
-        if (validPersons.length === 0) { setFormError('Adicione pelo menos um nome.'); return }
-
-        await supabase.from('returning_member_records').delete().eq('ward_id', wardId).eq('week_start', weekStart)
-        const { error: rErr } = await supabase.from('returning_member_records').insert(
-          validPersons.map(p => ({
-            ward_id: wardId, week_start: weekStart, person_name: p.name.trim(),
-            birth_date: p.birth_date || null, gender: p.gender || null, created_by: userId,
-          }))
-        )
-        if (rErr) { setFormError('Erro ao salvar nomes: ' + rErr.message); return }
-
-        await supabase.from('weekly_indicator_data').delete()
-          .eq('ward_id', wardId).eq('indicator_id', indicatorId).eq('week_start', weekStart)
-        const { error: wErr } = await supabase.from('weekly_indicator_data').insert({
-          ward_id: wardId, indicator_id: indicatorId, value: validPersons.length,
-          week_start: weekStart, source: 'manual', created_by: userId,
-        })
-        if (wErr) { setFormError('Erro ao salvar contagem: ' + wErr.message); return }
-
-        setToast({ type: 'success', text: `${validPersons.length} membro(s) retornando registrado(s)!` })
-        setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
-        nominalDirtyRef.current = false
+        // Recarrega os registros para atualizar ids/week_start_record
+        // (o useEffect de loadExisting depende de wardId; um truque é forçar refetch)
+        const { data: refreshed } = await supabase
+          .from(tableName)
+          .select(isBatismo
+            ? 'id, person_name, birth_date, gender, baptism_date, week_start'
+            : 'id, person_name, birth_date, gender, week_start')
+          .eq('ward_id', wardId)
+          .order('week_start', { ascending: false })
+          .order('person_name')
+        if (refreshed && refreshed.length > 0) {
+          setNominalPersons(refreshed.map((d: any) => ({
+            id: d.id, name: d.person_name, birth_date: d.birth_date || '',
+            gender: d.gender || '', baptism_date: d.baptism_date || '',
+            week_start_record: d.week_start,
+          })))
+          setNominalLoadedFromDb(true)
+        } else {
+          setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
+          setNominalLoadedFromDb(false)
+        }
         await fetchRecentEntries()
         await loadWeeklyStatus()
         return
@@ -1210,13 +1248,19 @@ export default function LancamentosPage() {
                     </div>
                     {nominalLoadedFromDb && (
                       <p className={`text-[11px] -mt-2 ${isBatismo ? 'text-emerald-700' : 'text-orange-700'}`}>
-                        Registros já lançados para esta ala/semana. Edite os campos abaixo e salve para sobrescrever.
+                        Lista completa da ala (todas as semanas). Edite ou remova linhas existentes; novas linhas usam o domingo de referência selecionado.
                       </p>
                     )}
 
                     <div className="space-y-3">
-                      {nominalPersons.map((person, index) => (
-                        <div key={index} className={`p-3 rounded-xl border bg-white ${isBatismo ? 'border-emerald-200' : 'border-orange-200'}`}>
+                      {nominalPersons.map((person, index) => {
+                        const isExisting = !!person.id
+                        const rowWeek = person.week_start_record || (isExisting ? '' : weekStart)
+                        const rowWeekLabel = rowWeek
+                          ? new Date(rowWeek + 'T12:00:00').toLocaleDateString('pt-BR')
+                          : 'sem domingo'
+                        return (
+                        <div key={person.id || `new-${index}`} className={`p-3 rounded-xl border bg-white ${isBatismo ? 'border-emerald-200' : 'border-orange-200'}`}>
                           <div className="flex items-center gap-2 mb-2">
                             <span className={`text-xs font-black w-5 text-center shrink-0 ${isBatismo ? 'text-emerald-400' : 'text-orange-400'}`}>{index + 1}</span>
                             <input type="text" value={person.name} onChange={e => updateNominalPerson(index, 'name', e.target.value)}
@@ -1225,12 +1269,17 @@ export default function LancamentosPage() {
                                 isBatismo ? 'border-emerald-200 text-emerald-800 focus:border-emerald-400 placeholder:text-emerald-300'
                                   : 'border-orange-200 text-orange-800 focus:border-orange-400 placeholder:text-orange-300'
                               }`} />
-                            {nominalPersons.length > 1 && (
-                              <button type="button" onClick={() => removeNominalPerson(index)}
-                                className="p-1.5 rounded-lg text-rose-400 hover:bg-rose-50 hover:text-rose-600 transition-all shrink-0">
-                                <Trash2 size={14} />
-                              </button>
-                            )}
+                            <span className={`shrink-0 text-[10px] font-bold px-2 py-1 rounded-md whitespace-nowrap ${
+                              isExisting
+                                ? (isBatismo ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-100 text-orange-700')
+                                : 'bg-amber-100 text-amber-700'
+                            }`} title={isExisting ? 'Lançamento existente — esta data não é alterada' : 'Será lançado no domingo selecionado acima'}>
+                              {isExisting ? `Dom ${rowWeekLabel}` : `Novo (${rowWeekLabel})`}
+                            </span>
+                            <button type="button" onClick={() => removeNominalPerson(index)}
+                              className="p-1.5 rounded-lg text-rose-400 hover:bg-rose-50 hover:text-rose-600 transition-all shrink-0">
+                              <Trash2 size={14} />
+                            </button>
                           </div>
                           <div className={`grid ${isBatismo ? 'grid-cols-3' : 'grid-cols-2'} gap-2 ml-7`}>
                             {isBatismo && (
@@ -1258,14 +1307,17 @@ export default function LancamentosPage() {
                             </div>
                           </div>
                         </div>
-                      ))}
+                        )
+                      })}
                     </div>
 
                     <button type="button" onClick={addNominalPerson}
-                      className={`flex items-center gap-2 font-bold text-xs transition-colors px-2 py-1.5 ${
+                      disabled={!weekStart}
+                      title={!weekStart ? 'Selecione o domingo de referência primeiro' : ''}
+                      className={`flex items-center gap-2 font-bold text-xs transition-colors px-2 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed ${
                         isBatismo ? 'text-emerald-600 hover:text-emerald-800' : 'text-orange-600 hover:text-orange-800'
                       }`}>
-                      <Plus size={16} /> Adicionar pessoa
+                      <Plus size={16} /> Adicionar pessoa {weekStart ? `(domingo ${new Date(weekStart + 'T12:00:00').toLocaleDateString('pt-BR')})` : ''}
                     </button>
                   </div>
                 )}
