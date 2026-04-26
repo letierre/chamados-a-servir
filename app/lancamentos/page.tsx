@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '../../lib/supabase/client'
 import {
@@ -213,6 +213,9 @@ export default function LancamentosPage() {
 
   // Nominais: batismo e retornando
   const [nominalPersons, setNominalPersons] = useState<NominalPerson[]>([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
+  // True quando o usuário começou a digitar nomes que ainda não foram salvos.
+  // Evita que mudanças em weekStart/wardId apaguem entradas em andamento.
+  const nominalDirtyRef = useRef(false)
 
   // Nominais: missionários
   const [missionaries, setMissionaries] = useState<MissionaryPerson[]>([])
@@ -273,6 +276,7 @@ export default function LancamentosPage() {
     setMembershipCount('')
     setLatestMembership(null)
     setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
+    nominalDirtyRef.current = false
     setMissionaries([])
   }, [wardId, indicatorId])
 
@@ -314,21 +318,21 @@ export default function LancamentosPage() {
   useEffect(() => {
     async function loadExisting() {
       if (!isBatismo && !isRetornando) return
-      if (!wardId || !weekStart) {
-        setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
-        return
-      }
+      if (!wardId || !weekStart) return
 
       if (isBatismo) {
         const { data, error } = await supabase.rpc('get_baptism_names', { p_ward_id: wardId, p_week_start: weekStart })
         if (error) console.warn('get_baptism_names:', error.message)
         if (data && data.length > 0) {
+          // Há registros salvos para esta combinação → carrega para edição.
           setNominalPersons(data.map((d: any) => ({
             name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || '',
             baptism_date: d.baptism_date || '',
           })))
-        } else {
-          // sem registros nesta combinação ala/data — limpa o formulário
+          nominalDirtyRef.current = false
+        } else if (!nominalDirtyRef.current) {
+          // Sem registros e usuário ainda não digitou nada → form limpo.
+          // Se ele já estava digitando, preserva o que ele escreveu.
           setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
         }
       } else if (isRetornando) {
@@ -339,7 +343,8 @@ export default function LancamentosPage() {
             name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || '',
             baptism_date: '',
           })))
-        } else {
+          nominalDirtyRef.current = false
+        } else if (!nominalDirtyRef.current) {
           setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
         }
       }
@@ -418,9 +423,16 @@ export default function LancamentosPage() {
   }, [router, supabase, fetchRecentEntries])
 
   // ─── Helpers nominais ───
-  function addNominalPerson() { setNominalPersons(prev => [...prev, { name: '', birth_date: '', gender: '', baptism_date: '' }]) }
-  function removeNominalPerson(i: number) { setNominalPersons(prev => prev.filter((_, idx) => idx !== i)) }
+  function addNominalPerson() {
+    nominalDirtyRef.current = true
+    setNominalPersons(prev => [...prev, { name: '', birth_date: '', gender: '', baptism_date: '' }])
+  }
+  function removeNominalPerson(i: number) {
+    nominalDirtyRef.current = true
+    setNominalPersons(prev => prev.filter((_, idx) => idx !== i))
+  }
   function updateNominalPerson(i: number, field: keyof NominalPerson, val: string) {
+    nominalDirtyRef.current = true
     setNominalPersons(prev => prev.map((p, idx) => idx === i ? { ...p, [field]: val } : p))
   }
 
@@ -549,6 +561,7 @@ export default function LancamentosPage() {
 
         setToast({ type: 'success', text: `${validPersons.length} batismo(s) registrado(s)!` })
         setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
+        nominalDirtyRef.current = false
         await fetchRecentEntries()
         await loadWeeklyStatus()
         return
@@ -582,6 +595,7 @@ export default function LancamentosPage() {
 
         setToast({ type: 'success', text: `${validPersons.length} membro(s) retornando registrado(s)!` })
         setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
+        nominalDirtyRef.current = false
         await fetchRecentEntries()
         await loadWeeklyStatus()
         return
