@@ -7,7 +7,7 @@ import {
   Building2, Target, Calendar, Hash, Save, Loader2,
   AlertCircle, CheckCircle2, History, Clock, ExternalLink,
   Users, X, BookOpen, Plus, Trash2, UserPlus, ClipboardCheck,
-  Eye, CalendarCheck, CalendarX2
+  Eye, CalendarCheck, CalendarX2, Pencil
 } from 'lucide-react'
 
 // ═══════════════════════════════════════
@@ -216,6 +216,10 @@ export default function LancamentosPage() {
   // True quando o usuário começou a digitar nomes que ainda não foram salvos.
   // Evita que mudanças em weekStart/wardId apaguem entradas em andamento.
   const nominalDirtyRef = useRef(false)
+  // True quando os nomes/missionários atualmente exibidos vieram do banco
+  // (estamos editando registros existentes), false se for entrada nova.
+  const [nominalLoadedFromDb, setNominalLoadedFromDb] = useState(false)
+  const [missionariesLoadedFromDb, setMissionariesLoadedFromDb] = useState(false)
 
   // Nominais: missionários
   const [missionaries, setMissionaries] = useState<MissionaryPerson[]>([])
@@ -277,7 +281,9 @@ export default function LancamentosPage() {
     setLatestMembership(null)
     setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
     nominalDirtyRef.current = false
+    setNominalLoadedFromDb(false)
     setMissionaries([])
+    setMissionariesLoadedFromDb(false)
   }, [wardId, indicatorId])
 
   // ─── Carrega último lançamento de membros (histórico) ao selecionar ala ───
@@ -315,37 +321,50 @@ export default function LancamentosPage() {
   }, [isMembrosParticipantes, wardId, weekStart, supabase])
 
   // ─── Carregar nomes existentes (batismo/retornando) ───
+  // Vai direto na tabela em vez de RPC — RLS já libera SELECT para autenticados
+  // e fica resiliente caso a função RPC esteja desatualizada.
   useEffect(() => {
     async function loadExisting() {
       if (!isBatismo && !isRetornando) return
       if (!wardId || !weekStart) return
 
       if (isBatismo) {
-        const { data, error } = await supabase.rpc('get_baptism_names', { p_ward_id: wardId, p_week_start: weekStart })
-        if (error) console.warn('get_baptism_names:', error.message)
+        const { data, error } = await supabase
+          .from('baptism_records')
+          .select('person_name, birth_date, gender, baptism_date')
+          .eq('ward_id', wardId)
+          .eq('week_start', weekStart)
+          .order('person_name')
+        if (error) console.warn('baptism_records select:', error.message)
         if (data && data.length > 0) {
-          // Há registros salvos para esta combinação → carrega para edição.
-          setNominalPersons(data.map((d: any) => ({
+          setNominalPersons(data.map(d => ({
             name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || '',
             baptism_date: d.baptism_date || '',
           })))
           nominalDirtyRef.current = false
+          setNominalLoadedFromDb(true)
         } else if (!nominalDirtyRef.current) {
-          // Sem registros e usuário ainda não digitou nada → form limpo.
-          // Se ele já estava digitando, preserva o que ele escreveu.
           setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
+          setNominalLoadedFromDb(false)
         }
       } else if (isRetornando) {
-        const { data, error } = await supabase.rpc('get_returning_names', { p_ward_id: wardId, p_week_start: weekStart })
-        if (error) console.warn('get_returning_names:', error.message)
+        const { data, error } = await supabase
+          .from('returning_member_records')
+          .select('person_name, birth_date, gender')
+          .eq('ward_id', wardId)
+          .eq('week_start', weekStart)
+          .order('person_name')
+        if (error) console.warn('returning_member_records select:', error.message)
         if (data && data.length > 0) {
-          setNominalPersons(data.map((d: any) => ({
+          setNominalPersons(data.map(d => ({
             name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || '',
             baptism_date: '',
           })))
           nominalDirtyRef.current = false
+          setNominalLoadedFromDb(true)
         } else if (!nominalDirtyRef.current) {
           setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
+          setNominalLoadedFromDb(false)
         }
       }
     }
@@ -358,15 +377,24 @@ export default function LancamentosPage() {
       if (!isMissionario || !wardId) return
       setLoadingMissionaries(true)
       try {
-        const { data } = await supabase.rpc('get_missionary_names', { p_ward_id: wardId })
+        const { data, error } = await supabase
+          .from('missionary_records')
+          .select('id, person_name, gender, mission_start_date, mission_end_date')
+          .eq('ward_id', wardId)
+          .order('person_name')
+        if (error) console.warn('missionary_records select:', error.message)
+        const today = new Date().toISOString().split('T')[0]
         if (data && data.length > 0) {
-          setMissionaries(data.map((d: any) => ({
+          setMissionaries(data.map(d => ({
             id: d.id, name: d.person_name, gender: d.gender || '',
-            mission_start_date: d.mission_start_date || '', mission_end_date: d.mission_end_date || '',
-            is_active: d.is_active,
+            mission_start_date: d.mission_start_date || '',
+            mission_end_date: d.mission_end_date || '',
+            is_active: !d.mission_end_date || d.mission_end_date >= today,
           })))
+          setMissionariesLoadedFromDb(true)
         } else {
           setMissionaries([])
+          setMissionariesLoadedFromDb(false)
         }
       } finally {
         setLoadingMissionaries(false)
@@ -1147,19 +1175,33 @@ export default function LancamentosPage() {
                   <div className={`animate-in fade-in slide-in-from-top-2 space-y-4 p-5 border rounded-2xl ${
                     isBatismo ? 'bg-emerald-50 border-emerald-100' : 'bg-orange-50 border-orange-100'
                   }`}>
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
                       <label className={`text-xs font-black uppercase tracking-wider flex items-center gap-2 ${
                         isBatismo ? 'text-emerald-700' : 'text-orange-700'
                       }`}>
                         <UserPlus size={16} className={isBatismo ? 'text-emerald-500' : 'text-orange-500'} />
                         {isBatismo ? 'Nomes dos Batizados' : 'Membros Retornando'}
                       </label>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        isBatismo ? 'text-emerald-600 bg-emerald-100' : 'text-orange-600 bg-orange-100'
-                      }`}>
-                        {nominalPersons.filter(p => p.name.trim().length >= 2).length} pessoa(s)
-                      </span>
+                      <div className="flex items-center gap-2">
+                        {nominalLoadedFromDb && (
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${
+                            isBatismo ? 'text-emerald-700 bg-emerald-200/60' : 'text-orange-700 bg-orange-200/60'
+                          }`}>
+                            <Pencil size={10} /> Editando registro existente
+                          </span>
+                        )}
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          isBatismo ? 'text-emerald-600 bg-emerald-100' : 'text-orange-600 bg-orange-100'
+                        }`}>
+                          {nominalPersons.filter(p => p.name.trim().length >= 2).length} pessoa(s)
+                        </span>
+                      </div>
                     </div>
+                    {nominalLoadedFromDb && (
+                      <p className={`text-[11px] -mt-2 ${isBatismo ? 'text-emerald-700' : 'text-orange-700'}`}>
+                        Registros já lançados para esta ala/semana. Edite os campos abaixo e salve para sobrescrever.
+                      </p>
+                    )}
 
                     <div className="space-y-3">
                       {nominalPersons.map((person, index) => (
@@ -1224,13 +1266,22 @@ export default function LancamentosPage() {
                       <label className="text-xs font-black text-indigo-700 uppercase tracking-wider flex items-center gap-2">
                         <BookOpen size={16} className="text-indigo-500" /> Missionários da Ala
                       </label>
-                      {loadingMissionaries && <Loader2 size={14} className="animate-spin text-indigo-400" />}
-                      <span className="text-[10px] font-bold text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded-full">
-                        {missionaries.filter(m => !m.mission_end_date || m.mission_end_date >= new Date().toISOString().split('T')[0]).length} ativo(s)
-                      </span>
+                      <div className="flex items-center gap-2">
+                        {loadingMissionaries && <Loader2 size={14} className="animate-spin text-indigo-400" />}
+                        {missionariesLoadedFromDb && (
+                          <span className="text-[10px] font-bold text-indigo-700 bg-indigo-200/60 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                            <Pencil size={10} /> Editando registros
+                          </span>
+                        )}
+                        <span className="text-[10px] font-bold text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded-full">
+                          {missionaries.filter(m => !m.mission_end_date || m.mission_end_date >= new Date().toISOString().split('T')[0]).length} ativo(s)
+                        </span>
+                      </div>
                     </div>
                     <p className="text-[10px] text-indigo-600 -mt-2">
-                      Missionários com data de término passada ficam inativos e não contam.
+                      {missionariesLoadedFromDb
+                        ? 'Missionários da ala carregados — edite, adicione ou remova; salve para sobrescrever.'
+                        : 'Missionários com data de término passada ficam inativos e não contam.'}
                     </p>
 
                     <div className="space-y-3">
