@@ -335,7 +335,10 @@ export default function LancamentosPage() {
           .eq('ward_id', wardId)
           .eq('week_start', weekStart)
           .order('person_name')
-        if (error) console.warn('baptism_records select:', error.message)
+        if (error) {
+          setFormError(`Falha ao buscar batismos existentes: ${error.message}`)
+          return
+        }
         if (data && data.length > 0) {
           setNominalPersons(data.map(d => ({
             name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || '',
@@ -354,7 +357,10 @@ export default function LancamentosPage() {
           .eq('ward_id', wardId)
           .eq('week_start', weekStart)
           .order('person_name')
-        if (error) console.warn('returning_member_records select:', error.message)
+        if (error) {
+          setFormError(`Falha ao buscar retornando existentes: ${error.message}`)
+          return
+        }
         if (data && data.length > 0) {
           setNominalPersons(data.map(d => ({
             name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || '',
@@ -382,7 +388,12 @@ export default function LancamentosPage() {
           .select('id, person_name, gender, mission_start_date, mission_end_date')
           .eq('ward_id', wardId)
           .order('person_name')
-        if (error) console.warn('missionary_records select:', error.message)
+        if (error) {
+          setFormError(`Falha ao buscar missionários: ${error.message}`)
+          setMissionaries([])
+          setMissionariesLoadedFromDb(false)
+          return
+        }
         const today = new Date().toISOString().split('T')[0]
         if (data && data.length > 0) {
           setMissionaries(data.map(d => ({

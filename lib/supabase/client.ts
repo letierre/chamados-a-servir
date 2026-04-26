@@ -4,14 +4,6 @@ export function createClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-  // --- DEBUG ---
-  console.log('--------------------------------')
-  console.log('DEBUG SUPABASE:')
-  console.log('URL:', url)
-  console.log('KEY:', key ? 'Chave carregada (oculta)' : 'KEY ESTÁ VAZIA!')
-  console.log('--------------------------------')
-  // -------------
-
   if (!url || !key) {
     throw new Error('As variáveis de ambiente do Supabase não foram carregadas!')
   }
