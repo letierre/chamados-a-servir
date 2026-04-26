@@ -208,6 +208,8 @@ export default function LancamentosPage() {
   // Campos extras
   const [valueRecomSem, setValueRecomSem] = useState('')
   const [membershipCount, setMembershipCount] = useState('')
+  // Último lançamento de membros para a ala selecionada (read-only, vem do histórico)
+  const [latestMembership, setLatestMembership] = useState<{ count: number; week: string } | null>(null)
 
   // Nominais: batismo e retornando
   const [nominalPersons, setNominalPersons] = useState<NominalPerson[]>([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
@@ -269,12 +271,44 @@ export default function LancamentosPage() {
     setFormError(null)
     setValueRecomSem('')
     setMembershipCount('')
+    setLatestMembership(null)
     setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
     setMissionaries([])
-    if (selectedWard && isMembrosParticipantes) {
-      setMembershipCount(String(selectedWard.membership_count || ''))
-    }
   }, [wardId, indicatorId])
+
+  // ─── Carrega último lançamento de membros (histórico) ao selecionar ala ───
+  useEffect(() => {
+    async function loadLatestMembership() {
+      if (!isMembrosParticipantes || !wardId) { setLatestMembership(null); return }
+      const { data, error } = await supabase.rpc('get_latest_ward_membership', { p_ward_id: wardId })
+      if (error) { console.warn('get_latest_ward_membership:', error.message); setLatestMembership(null); return }
+      if (data && data.length > 0) {
+        setLatestMembership({ count: data[0].membership_count, week: data[0].week_start })
+      } else if (selectedWard?.membership_count) {
+        // Fallback: se ainda não há histórico, mostra o valor atual da ala
+        setLatestMembership({ count: selectedWard.membership_count, week: '' })
+      } else {
+        setLatestMembership(null)
+      }
+    }
+    loadLatestMembership()
+  }, [isMembrosParticipantes, wardId, selectedWard, supabase])
+
+  // ─── Pré-preenche input se já houver lançamento para esta semana ───
+  useEffect(() => {
+    async function loadWeekMembership() {
+      if (!isMembrosParticipantes || !wardId || !weekStart) return
+      const { data } = await supabase
+        .from('weekly_ward_membership')
+        .select('membership_count')
+        .eq('ward_id', wardId)
+        .eq('week_start', weekStart)
+        .maybeSingle()
+      if (data) setMembershipCount(String(data.membership_count))
+      else setMembershipCount('')
+    }
+    loadWeekMembership()
+  }, [isMembrosParticipantes, wardId, weekStart, supabase])
 
   // ─── Carregar nomes existentes (batismo/retornando) ───
   useEffect(() => {
@@ -643,20 +677,30 @@ export default function LancamentosPage() {
         }
       }
 
-      // FIX: membership_count — garantir que salva corretamente
+      // membership_count — grava em weekly_ward_membership (semana a semana).
+      // O trigger no banco sincroniza wards.membership_count automaticamente.
       if (isMembrosParticipantes && membershipCount) {
         const numMembership = Number(membershipCount)
         if (numMembership > 0 && numMembership <= 10000) {
-          const { error: updErr } = await supabase.from('wards')
-            .update({ membership_count: numMembership })
-            .eq('id', wardId)
-          if (!updErr) {
-            extraSuccess += ' Membros da ala atualizado!'
-            // FIX: Atualizar o estado local para refletir a mudança
-            setWards(prev => prev.map(w => w.id === wardId ? { ...w, membership_count: numMembership } : w))
-          } else {
-            console.error('Erro ao atualizar membership:', updErr)
+          const { error: upErr } = await supabase
+            .from('weekly_ward_membership')
+            .upsert({
+              ward_id: wardId,
+              week_start: weekStart,
+              membership_count: numMembership,
+              created_by: userId,
+            }, { onConflict: 'ward_id,week_start' })
+          if (upErr) {
+            setFormError('Erro ao salvar total de membros: ' + upErr.message)
+            return
           }
+          extraSuccess += ' Total de membros registrado para esta semana!'
+          // Reflete localmente: a ala passa a ter o último lançamento = este
+          setWards(prev => prev.map(w => w.id === wardId ? { ...w, membership_count: numMembership } : w))
+          setLatestMembership({ count: numMembership, week: weekStart })
+        } else {
+          setFormError('Total de membros deve estar entre 1 e 10000.')
+          return
         }
       }
 
@@ -1236,19 +1280,43 @@ export default function LancamentosPage() {
                   </div>
                 )}
 
-                {/* Membros Participantes → membership_count */}
+                {/* Membros Participantes → total de membros (semana a semana) */}
                 {isMembrosParticipantes && (
-                  <div className="animate-in fade-in slide-in-from-top-2 space-y-2 md:space-y-3 p-5 bg-violet-50 border border-violet-100 rounded-2xl">
+                  <div className="animate-in fade-in slide-in-from-top-2 space-y-3 p-5 bg-violet-50 border border-violet-100 rounded-2xl">
                     <label className="text-xs font-black text-violet-700 uppercase tracking-wider flex items-center gap-2">
                       <Users size={16} className="text-violet-500" /> Total de Membros da Ala
                     </label>
-                    <p className="text-[10px] text-violet-600 -mt-1">
-                      Atualiza o campo de membros da ala para os cálculos proporcionais.
-                      {selectedWard && <span className="font-bold"> Valor atual: {selectedWard.membership_count}</span>}
-                    </p>
-                    <input type="number" value={membershipCount} onChange={e => setMembershipCount(e.target.value)} min={1} max={10000}
-                      className="w-full rounded-xl border-2 border-violet-200 bg-white px-4 py-3.5 text-xl md:text-2xl font-black text-violet-700 outline-none focus:border-violet-400 transition-all placeholder:text-violet-300"
-                      placeholder={selectedWard ? String(selectedWard.membership_count) : '0'} />
+
+                    {/* Último lançamento (read-only) */}
+                    <div className="flex items-center justify-between gap-3 p-3 bg-white rounded-xl border border-violet-100">
+                      <div>
+                        <p className="text-[10px] font-bold text-violet-500 uppercase tracking-wider">Último lançado</p>
+                        <p className="text-2xl font-black text-violet-700 mt-0.5">
+                          {latestMembership ? latestMembership.count : '—'}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[10px] font-bold text-violet-400 uppercase">Semana</p>
+                        <p className="text-xs font-bold text-violet-600 mt-0.5">
+                          {latestMembership?.week
+                            ? new Date(latestMembership.week + 'T12:00:00').toLocaleDateString('pt-BR')
+                            : '—'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Novo lançamento para a semana selecionada */}
+                    <div>
+                      <p className="text-[10px] font-bold text-violet-600 uppercase tracking-wider mb-1.5">
+                        Novo total de membros (para o domingo {weekStart ? new Date(weekStart + 'T12:00:00').toLocaleDateString('pt-BR') : 'selecionado'})
+                      </p>
+                      <input type="number" value={membershipCount} onChange={e => setMembershipCount(e.target.value)} min={1} max={10000}
+                        className="w-full rounded-xl border-2 border-violet-200 bg-white px-4 py-3.5 text-xl md:text-2xl font-black text-violet-700 outline-none focus:border-violet-400 transition-all placeholder:text-violet-300"
+                        placeholder={latestMembership ? String(latestMembership.count) : '0'} />
+                      <p className="text-[10px] text-violet-500 mt-1.5">
+                        Cada lançamento gera uma linha histórica (ala + semana). Não sobrescreve os anteriores.
+                      </p>
+                    </div>
                   </div>
                 )}
 
