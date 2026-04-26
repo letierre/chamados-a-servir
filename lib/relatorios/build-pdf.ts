@@ -189,8 +189,12 @@ async function buildSummaryPdf(
   doc.setFontSize(9)
   doc.setFont('helvetica', 'normal')
   doc.setTextColor(80, 80, 80)
-  doc.text(filterByWards ? `Alas: ${wards.map(w => w.name).join(', ')}` : 'Escopo: estaca completa', 14, y)
-  y += 7
+  const pageWidthMm = doc.internal.pageSize.getWidth()
+  const usableWidth = pageWidthMm - 28
+  const summaryHeader = filterByWards ? `Alas: ${wards.map(w => w.name).join(', ')}` : 'Escopo: estaca completa'
+  const summaryLines = doc.splitTextToSize(summaryHeader, usableWidth)
+  doc.text(summaryLines, 14, y)
+  y += summaryLines.length * 4.5 + 3
   doc.setTextColor(0, 0, 0)
 
   if (indicatorOrder.length === 0) {
@@ -229,11 +233,15 @@ async function buildSummaryPdf(
       startY: y,
       head: [[first.display_name, `${valueLabel}: ${fmt(mainValue)}`]],
       body: targetLine ? [[{ content: targetLine, colSpan: 2, styles: { fontStyle: 'italic', textColor: [80, 80, 80] } }]] : [],
-      headStyles: { fillColor: [30, 106, 141], textColor: 255, fontStyle: 'bold', fontSize: 10 },
-      bodyStyles: { fontSize: 9 },
+      headStyles: { fillColor: [30, 106, 141], textColor: 255, fontStyle: 'bold', fontSize: 10, overflow: 'linebreak', cellPadding: 2 },
+      bodyStyles: { fontSize: 9, overflow: 'linebreak', cellPadding: 2 },
       theme: 'grid',
       margin: { left: 14, right: 14 },
       tableWidth: 'auto',
+      columnStyles: {
+        0: { cellWidth: 'auto' },
+        1: { cellWidth: 50, halign: 'right' },
+      },
     })
     y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 2
 
@@ -253,10 +261,15 @@ async function buildSummaryPdf(
         }
         return cells
       }),
-      headStyles: { fillColor: [240, 245, 250], textColor: [30, 106, 141], fontStyle: 'bold', fontSize: 9 },
-      bodyStyles: { fontSize: 9 },
+      headStyles: { fillColor: [240, 245, 250], textColor: [30, 106, 141], fontStyle: 'bold', fontSize: 9, overflow: 'linebreak', cellPadding: 2 },
+      bodyStyles: { fontSize: 9, overflow: 'linebreak', cellPadding: 2 },
       theme: 'striped',
       margin: { left: 14, right: 14 },
+      columnStyles: {
+        0: { cellWidth: 'auto' },
+        1: { cellWidth: 28, halign: 'right' },
+        ...(config.include_targets ? { 2: { cellWidth: 28, halign: 'right' } } : {}),
+      },
     })
     y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8
 
@@ -373,22 +386,29 @@ async function buildNominalPdf(
   doc.setFont('helvetica', 'normal')
   doc.setTextColor(80, 80, 80)
 
+  const pageWidthMm = doc.internal.pageSize.getWidth()
+  const usableWidth = pageWidthMm - 28 // 14mm de margem cada lado
+  const writeWrapped = (text: string) => {
+    const lines = doc.splitTextToSize(text, usableWidth)
+    doc.text(lines, 14, y)
+    y += lines.length * 4.5
+  }
+
   const filterBits: string[] = []
   if (ageMin !== null && ageMax !== null) filterBits.push(`Idade ${ageMin}–${ageMax}`)
   else if (ageMin !== null) filterBits.push(`Idade ≥ ${ageMin}`)
   else if (ageMax !== null) filterBits.push(`Idade ≤ ${ageMax}`)
   if (gender === 'M') filterBits.push('Masculino')
   else if (gender === 'F') filterBits.push('Feminino')
-  if (filterBits.length > 0) {
-    doc.text(`Filtros: ${filterBits.join(' · ')}`, 14, y); y += 5
-  }
+  if (filterBits.length > 0) writeWrapped(`Filtros: ${filterBits.join(' · ')}`)
+
   if (filterByWards) {
     const names = Array.from(new Set(config.ward_ids.map(id => wardMap.get(id)).filter(Boolean))) as string[]
-    doc.text(`Alas: ${names.join(', ')}`, 14, y); y += 5
+    writeWrapped(`Alas: ${names.join(', ')}`)
   } else {
-    doc.text('Escopo: estaca (todas as alas)', 14, y); y += 5
+    writeWrapped('Escopo: estaca (todas as alas)')
   }
-  doc.text(`Total encontrado: ${people.length} pessoa(s)`, 14, y); y += 3
+  writeWrapped(`Total encontrado: ${people.length} pessoa(s)`)
   doc.setTextColor(0, 0, 0)
 
   if (people.length === 0) {
@@ -410,7 +430,7 @@ async function buildNominalPdf(
   for (const [wardName, list] of byWard) {
     autoTable(doc, {
       startY: y + 2,
-      head: [[{ content: `${wardName}  (${list.length})`, colSpan: 4, styles: { fillColor: [30, 106, 141], textColor: 255, fontStyle: 'bold' } }]],
+      head: [[{ content: `${wardName}  (${list.length})`, colSpan: 4, styles: { fillColor: [30, 106, 141], textColor: 255, fontStyle: 'bold', overflow: 'linebreak', cellPadding: 2 } }]],
       body: [],
       theme: 'grid',
       margin: { left: 14, right: 14 },
@@ -426,15 +446,15 @@ async function buildNominalPdf(
         p.gender === 'M' ? 'Masculino' : p.gender === 'F' ? 'Feminino' : '—',
         formatShortDate(p.date_ref),
       ]),
-      headStyles: { fillColor: [240, 245, 250], textColor: [30, 106, 141], fontStyle: 'bold', fontSize: 9 },
-      bodyStyles: { fontSize: 9 },
+      headStyles: { fillColor: [240, 245, 250], textColor: [30, 106, 141], fontStyle: 'bold', fontSize: 9, overflow: 'linebreak', cellPadding: 2 },
+      bodyStyles: { fontSize: 9, overflow: 'linebreak', cellPadding: 2 },
       theme: 'striped',
       margin: { left: 14, right: 14 },
       columnStyles: {
         0: { cellWidth: 'auto' },
-        1: { cellWidth: 18, halign: 'center' },
-        2: { cellWidth: 28, halign: 'center' },
-        3: { cellWidth: 28, halign: 'center' },
+        1: { cellWidth: 16, halign: 'center' },
+        2: { cellWidth: 24, halign: 'center' },
+        3: { cellWidth: 24, halign: 'center' },
       },
     })
     y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 4
