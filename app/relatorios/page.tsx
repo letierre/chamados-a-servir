@@ -779,6 +779,24 @@ function ReportModal({
           {/* Indicadores (somente resumo) */}
           {form.report_type === 'summary' && (
             <Field label={`Indicadores (${form.indicators.length}/${indicators.length})`}>
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, indicators: indicators.map(i => i.slug) })}
+                  disabled={form.indicators.length === indicators.length}
+                  className="px-3 py-1 text-xs font-semibold rounded-lg border border-sky-200 text-sky-700 bg-sky-50 hover:bg-sky-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Selecionar todos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, indicators: [] })}
+                  disabled={form.indicators.length === 0}
+                  className="px-3 py-1 text-xs font-semibold rounded-lg border border-gray-200 text-gray-600 bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Limpar
+                </button>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 {indicators.map(ind => {
                   const checked = form.indicators.includes(ind.slug)
@@ -876,7 +894,25 @@ function ReportModal({
           )}
 
           {/* Alas */}
-          <Field label={`Alas — deixe vazio para Estaca (${form.ward_ids.length} selecionadas)`}>
+          <Field label={`Alas (${form.ward_ids.length === 0 ? `Estaca — todas as ${wards.length}` : `${form.ward_ids.length} de ${wards.length}`})`}>
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, ward_ids: wards.map(w => w.id) })}
+                disabled={form.ward_ids.length === wards.length}
+                className="px-3 py-1 text-xs font-semibold rounded-lg border border-sky-200 text-sky-700 bg-sky-50 hover:bg-sky-100 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Selecionar todas
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, ward_ids: [] })}
+                disabled={form.ward_ids.length === 0}
+                className="px-3 py-1 text-xs font-semibold rounded-lg border border-gray-200 text-gray-600 bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Limpar (= estaca toda)
+              </button>
+            </div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
               {wards.map(w => {
                 const checked = form.ward_ids.includes(w.id)
