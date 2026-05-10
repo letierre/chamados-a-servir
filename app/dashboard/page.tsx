@@ -428,16 +428,16 @@ export default function DashboardPage() {
           indicador: h.display_name, data: h.week_start, valor: h.raw_value,
         })),
       }
-      const response = await fetch('https://webhooks.oryen.agency/webhook/chamados-a-servir-analise-ia', {
+      const response = await fetch('/api/ai/analise', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
-      const textResponse = await response.text()
-      try {
-        let json = JSON.parse(textResponse)
-        if (Array.isArray(json)) json = json[0]
-        setAiResult(json.analise || json.output || json.message || textResponse)
-      } catch { setAiResult(textResponse) }
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: 'Erro desconhecido' }))
+        throw new Error(err.error || `HTTP ${response.status}`)
+      }
+      const json = await response.json()
+      setAiResult(json.analise || 'A análise não retornou conteúdo.')
     } catch (error) {
       console.error('Erro webhook IA:', error)
       setAiResult('Ocorreu um erro ao comunicar com a inteligência artificial. Tente novamente.')
