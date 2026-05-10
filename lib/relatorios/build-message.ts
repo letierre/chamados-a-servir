@@ -3,7 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 export type ReportPeriod =
   | 'current_month' | 'last_month' | '90d' | '12m' | 'current_year'
 
-export type ReportType = 'summary' | 'nominal'
+export type ReportType = 'summary' | 'nominal' | 'sumo_briefing'
 export type NominalSource = 'baptism' | 'returning' | 'missionary'
 export type GenderFilter = 'all' | 'M' | 'F'
 
@@ -86,6 +86,9 @@ export async function buildReportMessage(
 ): Promise<string> {
   if (config.report_type === 'nominal') {
     return buildNominalMessage(supabase, config)
+  }
+  if (config.report_type === 'sumo_briefing') {
+    return buildSumoBriefingMessage(supabase, config)
   }
   return buildSummaryMessage(supabase, config)
 }
@@ -420,5 +423,72 @@ async function fetchNominalRecords(
         date_ref: r.mission_start_date,
       })) ?? null,
   }
+}
+
+// ═══════════════════════════════════════
+// BRIEFING SUMO CONSELHEIRO (WhatsApp)
+// ═══════════════════════════════════════
+
+async function buildSumoBriefingMessage(
+  supabase: SupabaseClient,
+  config: ReportConfig,
+): Promise<string> {
+  const { start, end } = getDateRange(config.period)
+  const { data: wardsData } = await supabase.from('wards').select('id, name')
+  const wardMap = new Map<string, string>()
+  for (const w of (wardsData as { id: string; name: string }[] || [])) wardMap.set(w.id, w.name)
+
+  const filterByWards = config.ward_ids.length > 0
+  const selectedWardSet = new Set(config.ward_ids)
+
+  const { data: rpcData } = await supabase.rpc('get_dashboard_data_v2', { p_start: start, p_end: end })
+  const rows = (rpcData || []) as any[]
+
+  const targetMatrix: Record<string, Record<string, number>> = {}
+  const { data: targetsData } = await supabase
+    .from('indicator_targets')
+    .select('indicator_id, ward_id, target_value')
+  if (targetsData) {
+    for (const t of targetsData as { indicator_id: string; ward_id: string; target_value: number }[]) {
+      if (!targetMatrix[t.indicator_id]) targetMatrix[t.indicator_id] = {}
+      targetMatrix[t.indicator_id][t.ward_id] = Number(t.target_value) || 0
+    }
+  }
+
+  const filteredRows = filterByWards
+    ? rows.filter((r: any) => selectedWardSet.has(r.ward_id))
+    : rows
+
+  const wards = Array.from(new Set(filteredRows.map((r: any) => r.ward_id)))
+    .map(id => ({ id, name: wardMap.get(id) || '—' }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  let message = `📋 *Briefing para Sumo Conselheiro*\n`
+  message += `Período: ${PERIOD_LABELS[config.period]}\n\n`
+
+  for (const ward of wards) {
+    const wardRows = filteredRows.filter((r: any) => r.ward_id === ward.id)
+    const grouped = new Map<string, any[]>()
+    for (const r of wardRows) {
+      const arr = grouped.get(r.indicator_id) || []
+      arr.push(r)
+      grouped.set(r.indicator_id, arr)
+    }
+
+    message += `🏠 *${ward.name}*\n`
+    for (const [, group] of grouped) {
+      const first = group[0]
+      const total = group.reduce((s: number, r: any) => s + r.computed_value, 0)
+      const target = targetMatrix[first.indicator_id]?.[ward.id] || 0
+      const progress = target > 0 ? Math.round((total / target) * 100) : 0
+      const icon = progress >= 80 ? '✅' : progress >= 40 ? '⚠️' : '🔴'
+      message += `${icon} ${first.display_name}: ${total}${target > 0 ? ' / ' + target + ' (' + progress + '%)' : ''}\n`
+    }
+    message += '\n'
+  }
+
+  message += `💡 *Sugestão:* Gere o PDF completo no módulo de Relatórios para levar ao conselho da ala.`
+
+  return message
 }
 

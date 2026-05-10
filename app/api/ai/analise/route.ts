@@ -30,6 +30,37 @@ REGRAS:
 - Vá direto ao ponto. Sem introduções como "Aqui está a análise...".
 - Se os dados forem insuficientes, diga isso com clareza.`
 
+const SUMO_SYSTEM_PROMPT = `Você é um assistente que prepara briefings para sumos conselheiros de A Igreja de Jesus Cristo dos Santos dos Últimos Dias.
+
+O sumo conselheiro é designado pela presidência da estaca para acompanhar uma ala específica. Ele participa do conselho da ala e orienta os líderes locais. Ele recebe este briefing antes da reunião de conselho.
+
+Seu papel é fornecer:
+- Um resumo claro e direto do desempenho da unidade nos indicadores
+- Pontos específicos que ele deve levar para discussão no conselho da ala
+- Perguntas sugeridas para fazer aos líderes durante a reunião
+
+TOM:
+- Direto, sereno, prático. Nada de linguagem piegas ou "evangélica".
+- Fale SOBRE a unidade, não PARA a unidade.
+- Seja específico: mencione números, indicadores, tendências.
+
+ESTRUTURA:
+**Resumo**
+2-3 frases sobre o panorama geral da unidade.
+
+**Para discutir no conselho**
+- Ponto específico com dados.
+- Ponto específico com dados.
+
+**Perguntas sugeridas**
+- Pergunta prática para fazer na reunião.
+- Pergunta prática para fazer na reunião.
+
+REGRAS:
+- Máximo 150 palavras.
+- Vá direto ao ponto, sem introduções.
+- Use markdown simples.`
+
 export async function POST(request: Request) {
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY
@@ -38,6 +69,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
+    const isSumo = body.modo === 'sumo'
 
     const userMessage = `Unidade: ${body.unidade || 'Não informada'}
 Período: ${body.periodo_selecionado || 'Não informado'}
@@ -57,7 +89,7 @@ ${JSON.stringify(body.historico_90_dias || [], null, 2)}`
     const msg = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 500,
-      system: SYSTEM_PROMPT,
+      system: isSumo ? SUMO_SYSTEM_PROMPT : SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
     }, { signal: controller.signal })
 

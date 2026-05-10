@@ -115,6 +115,9 @@ export async function buildReportPdf(
   if (config.report_type === 'nominal') {
     return buildNominalPdf(supabase, config)
   }
+  if (config.report_type === 'sumo_briefing') {
+    return buildSumoBriefingPdf(supabase, config)
+  }
   return buildSummaryPdf(supabase, config)
 }
 
@@ -465,6 +468,277 @@ async function buildNominalPdf(
       y = 40
     }
   }
+
+  drawFooter(doc)
+  return doc
+}
+
+// ═══════════════════════════════════════
+// BRIEFING SUMO CONSELHEIRO
+// ═══════════════════════════════════════
+
+const SUMO_SYSTEM_PROMPT = `Você é um assistente que prepara briefings para sumos conselheiros de A Igreja de Jesus Cristo dos Santos dos Últimos Dias.
+
+O sumo conselheiro é designado pela presidência da estaca para acompanhar uma ala específica. Ele participa do conselho da ala e orienta os líderes locais. Ele recebe este briefing antes da reunião de conselho.
+
+Seu papel é fornecer:
+- Um resumo claro e direto do desempenho da unidade nos indicadores
+- Pontos específicos que ele deve levar para discussão no conselho da ala
+- Perguntas sugeridas para fazer aos líderes durante a reunião
+
+TOM:
+- Direto, sereno, prático. Nada de linguagem piegas ou "evangélica".
+- Fale SOBRE a unidade, não PARA a unidade.
+- Seja específico: mencione números, indicadores, tendências.
+
+ESTRUTURA:
+**Resumo**
+2-3 frases sobre o panorama geral da unidade.
+
+**Para discutir no conselho**
+- Ponto específico com dados.
+- Ponto específico com dados.
+
+**Perguntas sugeridas**
+- Pergunta prática para fazer na reunião.
+- Pergunta prática para fazer na reunião.
+
+REGRAS:
+- Máximo 150 palavras.
+- Vá direto ao ponto, sem introduções.
+- Use markdown simples.`
+
+async function buildSumoBriefingPdf(
+  supabase: SupabaseClient,
+  config: ReportConfig,
+): Promise<jsPDF> {
+  const { start, end } = getDateRange(config.period)
+
+  const [rpcRes, baptismByWardRes, wardsRes] = await Promise.all([
+    supabase.rpc('get_dashboard_data_v2', { p_start: start, p_end: end }),
+    supabase.from('baptism_records').select('ward_id').gte('baptism_date', start).lte('baptism_date', end),
+    supabase.from('wards').select('id, name, membership_count'),
+  ])
+  if (rpcRes.error) throw new Error(`RPC get_dashboard_data_v2: ${rpcRes.error.message}`)
+
+  let rows = (rpcRes.data || []) as RpcRow[]
+
+  if (baptismByWardRes.data) {
+    const countByWard = new Map<string, number>()
+    for (const b of baptismByWardRes.data as { ward_id: string }[]) {
+      countByWard.set(b.ward_id, (countByWard.get(b.ward_id) || 0) + 1)
+    }
+    rows = rows.map(r =>
+      r.slug === 'batismo_converso' ? { ...r, computed_value: countByWard.get(r.ward_id) || 0 } : r,
+    )
+  }
+
+  const filterByWards = config.ward_ids.length > 0
+  const selectedWardSet = new Set(config.ward_ids)
+  const filteredRows = filterByWards ? rows.filter(r => selectedWardSet.has(r.ward_id)) : rows
+
+  const wardMap = new Map<string, { name: string; membership: number }>()
+  for (const w of (wardsRes.data as { id: string; name: string; membership_count: number }[] || [])) {
+    wardMap.set(w.id, { name: w.name, membership: w.membership_count || 0 })
+  }
+
+  const wards = Array.from(new Set(filteredRows.map(r => r.ward_id)))
+    .map(id => ({ id, ...(wardMap.get(id) || { name: '—', membership: 0 }) }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  const targetMatrix: Record<string, Record<string, number>> = {}
+  const { data: targetsData } = await supabase
+    .from('indicator_targets')
+    .select('indicator_id, ward_id, target_value')
+  if (targetsData) {
+    for (const t of targetsData as { indicator_id: string; ward_id: string; target_value: number }[]) {
+      if (!targetMatrix[t.indicator_id]) targetMatrix[t.indicator_id] = {}
+      targetMatrix[t.indicator_id][t.ward_id] = Number(t.target_value) || 0
+    }
+  }
+
+  const byIndicator = new Map<string, RpcRow[]>()
+  for (const row of filteredRows) {
+    const arr = byIndicator.get(row.indicator_id) || []
+    arr.push(row)
+    byIndicator.set(row.indicator_id, arr)
+  }
+  const indicatorOrder = Array.from(byIndicator.values())
+    .map(rs => ({ id: rs[0].indicator_id, display_name: rs[0].display_name, slug: rs[0].slug, order: rs[0].order_index }))
+    .filter(i => i.slug !== 'membros_participantes')
+    .sort((a, b) => a.order - b.order)
+
+  const isLongPeriod = ['90d', '12m', 'current_year'].includes(config.period)
+  const REC = ['recomendacao_templo_com_investidura', 'recomendacao_templo_sem_investidura']
+
+  type WardIndicator = { display_name: string; slug: string; value: number; target: number; progress: number }
+  const wardIndicators = new Map<string, WardIndicator[]>()
+  for (const ward of wards) {
+    const entries: WardIndicator[] = []
+    for (const { id, display_name, slug } of indicatorOrder) {
+      const wardRows = (byIndicator.get(id) || []).filter(r => r.ward_id === ward.id)
+      if (wardRows.length === 0) continue
+      const isAvg = wardRows[0].aggregation_method === 'avg' || (REC.includes(slug) && isLongPeriod)
+      const values = wardRows.map(r => r.computed_value)
+      const total = values.reduce((s, v) => s + v, 0)
+      const value = isAvg ? total / values.length : total
+      const target = targetMatrix[id]?.[ward.id] || 0
+      const progress = target > 0 ? Math.round((value / target) * 100) : 0
+      entries.push({ display_name, slug, value: Math.round(value * 10) / 10, target, progress })
+    }
+    entries.sort((a, b) => a.progress - b.progress)
+    wardIndicators.set(ward.id, entries)
+  }
+
+  // ── AI Analysis ──
+  let aiAnalysis = ''
+  try {
+    const aiPayload = {
+      unidade: wards.map(w => w.name).join(', '),
+      data_analise: new Date().toLocaleDateString('pt-BR'),
+      periodo_selecionado: PERIOD_LABELS[config.period],
+      metricas_atuais: filteredRows.map(r => ({
+        indicador: r.display_name,
+        valor_atual: r.computed_value,
+        meta: targetMatrix[r.indicator_id]?.[r.ward_id] || 0,
+      })),
+      historico_90_dias: [] as any[],
+      modo: 'sumo',
+    }
+    const res = await fetch('/api/ai/analise', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(aiPayload),
+    })
+    if (res.ok) {
+      const json = await res.json()
+      aiAnalysis = json.analise || ''
+    }
+  } catch { /* AI indisponível */ }
+
+  // ── Render PDF ──
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  const wardNames = wards.map(w => w.name).join(', ')
+  const subtitle = `${PERIOD_LABELS[config.period]} · ${filterByWards ? wardNames : 'Estaca (todas as alas)'}`
+  const title = `Briefing para Sumo Conselheiro`
+
+  drawHeader(doc, title, subtitle)
+
+  let y = 40
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
+
+  // Seção 1 — Visão Geral
+  doc.setFontSize(12)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(30, 106, 141)
+  doc.text('Visão Geral da Unidade', 14, y)
+  y += 8
+
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'normal')
+  doc.setTextColor(60, 60, 60)
+  for (const ward of wards) {
+    doc.text(`Ala ${ward.name}: ${ward.membership} membros registrados`, 14, y)
+    y += 5
+  }
+  y += 3
+
+  // Seção 2 — Indicadores em Destaque
+  doc.setFontSize(12)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(30, 106, 141)
+  doc.text('Indicadores em Destaque', 14, y)
+  y += 8
+
+  for (const ward of wards) {
+    const entries = wardIndicators.get(ward.id) || []
+    if (wards.length > 1) {
+      doc.setFontSize(10)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(80, 80, 80)
+      doc.text(ward.name, 14, y)
+      y += 6
+    }
+
+    if (entries.length === 0) {
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'normal')
+      doc.text('Nenhum dado disponível para o período.', 14, y)
+      y += 5
+      continue
+    }
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Indicador', 'Valor', 'Meta', 'Progresso']],
+      body: entries.map(e => [
+        e.display_name,
+        fmt(e.value),
+        e.target > 0 ? fmt(e.target) : '—',
+        e.target > 0 ? `${e.progress}%` : '—',
+      ]),
+      headStyles: { fillColor: [30, 106, 141], textColor: 255, fontStyle: 'bold', fontSize: 8, overflow: 'linebreak', cellPadding: 2 },
+      bodyStyles: { fontSize: 8, overflow: 'linebreak', cellPadding: 2 },
+      theme: 'striped',
+      margin: { left: 14, right: 14 },
+      columnStyles: {
+        0: { cellWidth: 'auto' },
+        1: { cellWidth: 22, halign: 'right' },
+        2: { cellWidth: 22, halign: 'right' },
+        3: { cellWidth: 28, halign: 'right' },
+      },
+      didDrawCell: (data: any) => {
+        if (data.section === 'body' && data.column.index === 3 && data.cell.raw) {
+          const raw = data.cell.raw as string
+          const pct = parseInt(raw)
+          if (!isNaN(pct)) {
+            if (pct >= 80) {
+              doc.setFillColor(220, 252, 231)
+              doc.rect(data.cell.x, data.cell.y, data.cell.width, data.cell.height, 'F')
+            } else if (pct < 40) {
+              doc.setFillColor(254, 226, 226)
+              doc.rect(data.cell.x, data.cell.y, data.cell.width, data.cell.height, 'F')
+            }
+          }
+        }
+      },
+    })
+    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 4
+
+    if (y > pageHeight - 40 && ward !== wards[wards.length - 1]) {
+      doc.addPage()
+      drawHeader(doc, title, subtitle)
+      y = 40
+    }
+  }
+  y += 4
+
+  // Seção 3 — Análise para o Conselho de Ala
+  if (aiAnalysis) {
+    if (y > pageHeight - 50) { doc.addPage(); drawHeader(doc, title, subtitle); y = 40 }
+    doc.setFontSize(12)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(30, 106, 141)
+    doc.text('Análise para o Conselho de Ala', 14, y)
+    y += 8
+
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(60, 60, 60)
+    const lines = doc.splitTextToSize(aiAnalysis, pageWidth - 28)
+    doc.text(lines, 14, y)
+    y += lines.length * 4.5 + 4
+  }
+
+  // Seção 4 — Nota final
+  if (y > pageHeight - 30) { doc.addPage(); drawHeader(doc, title, subtitle); y = 40 }
+  y += 3
+  doc.setFontSize(7.5)
+  doc.setFont('helvetica', 'italic')
+  doc.setTextColor(120, 120, 120)
+  doc.text('Documento gerado para uso do sumo conselheiro designado — levar ao conselho da ala.', 14, y)
+  doc.text('Conteúdo confidencial — destina-se exclusivamente ao sumo conselheiro e à presidência da estaca.', 14, y + 4)
 
   drawFooter(doc)
   return doc

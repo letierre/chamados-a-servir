@@ -10,11 +10,14 @@ import {
   Search, BarChart3,
   FileText, FileSpreadsheet,
   TrendingUp, Printer, Bot, Sparkles, Loader2,
-  CalendarRange, X
+  CalendarRange, X,
+  ClipboardList
 } from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts'
+import { buildReportPdf, safeFileName } from '../../lib/relatorios/build-pdf'
+import type { ReportConfig } from '../../lib/relatorios/build-message'
 
 // ═══════════════════════════════════════
 // TIPOS
@@ -181,6 +184,7 @@ export default function DashboardPage() {
   const [isPrintingXRay, setIsPrintingXRay] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
   const [aiResult, setAiResult] = useState<string | null>(null)
+  const [sumoBriefingLoading, setSumoBriefingLoading] = useState(false)
   const [displayedAiResult, setDisplayedAiResult] = useState<string | null>(null)
   const [isTyping, setIsTyping] = useState(false)
 
@@ -444,6 +448,34 @@ export default function DashboardPage() {
     } finally { setAiLoading(false) }
   }
 
+  const handleGenerateSumoBriefing = async () => {
+    if (wardMetrics.length === 0) return
+    setSumoBriefingLoading(true)
+    try {
+      const period = selectedPeriod === 'custom' ? 'current_month' : selectedPeriod
+      const cfg: ReportConfig = {
+        id: 'sumo-dashboard',
+        name: `Briefing do Sumo — ${selectedWardName}`,
+        recipient_whatsapp: '',
+        frequency: 'daily',
+        send_time: '08:00',
+        send_day: null,
+        indicators: [],
+        ward_ids: selectedWardId === STAKE_ID ? [] : [selectedWardId],
+        period,
+        include_targets: true,
+        include_ranking: false,
+        is_active: false,
+        report_type: 'sumo_briefing',
+      }
+      const supabase = createClient()
+      const doc = await buildReportPdf(supabase, cfg)
+      doc.save(safeFileName(cfg.name))
+    } catch (error) {
+      console.error('Erro briefing sumo:', error)
+    } finally { setSumoBriefingLoading(false) }
+  }
+
   // ═══════════════════════════════════════
   // RENDER
   // ═══════════════════════════════════════
@@ -620,6 +652,11 @@ export default function DashboardPage() {
                   className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] md:text-xs font-bold rounded-lg transition-colors shadow-sm disabled:opacity-50 shrink-0">
                   {aiLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
                   <span className="hidden sm:inline">Análise IA</span><span className="sm:hidden">IA</span>
+                </button>
+                <button onClick={handleGenerateSumoBriefing} disabled={sumoBriefingLoading}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-[10px] md:text-xs font-bold rounded-lg transition-colors shadow-sm disabled:opacity-50 shrink-0">
+                  {sumoBriefingLoading ? <Loader2 size={14} className="animate-spin" /> : <ClipboardList size={14} />}
+                  <span className="hidden sm:inline">Briefing do Sumo</span><span className="sm:hidden">Sumo</span>
                 </button>
                 <button onClick={handlePrintXRay}
                   className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white text-[10px] md:text-xs font-bold rounded-lg transition-colors shadow-sm shrink-0">

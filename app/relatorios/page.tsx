@@ -15,7 +15,7 @@ import type { ReportConfig as PdfReportConfig } from '../../lib/relatorios/build
 
 type Frequency = 'daily' | 'weekly' | 'monthly'
 type Period = 'current_month' | 'last_month' | '90d' | '12m' | 'current_year'
-type ReportType = 'summary' | 'nominal'
+type ReportType = 'summary' | 'nominal' | 'sumo_briefing'
 type NominalSource = 'baptism' | 'returning' | 'missionary'
 type GenderFilter = 'all' | 'M' | 'F'
 
@@ -210,13 +210,14 @@ export default function RelatoriosPage() {
 
     setSaving(true)
     const isNominal = form.report_type === 'nominal'
+    const isSumo = form.report_type === 'sumo_briefing'
     const payload = {
       name: form.name.trim(),
       recipient_whatsapp: form.recipient_whatsapp.replace(/\D/g, ''),
       frequency: form.frequency,
       send_time: form.send_time,
       send_day: form.frequency === 'daily' ? null : form.send_day,
-      indicators: isNominal ? [] : form.indicators,
+      indicators: (isNominal || isSumo) ? [] : form.indicators,
       ward_ids: form.ward_ids,
       period: form.period,
       include_targets: isNominal ? false : form.include_targets,
@@ -540,6 +541,10 @@ function ReportCard({
               </span>
             )}
           </>
+        ) : cfg.report_type === 'sumo_briefing' ? (
+          <span className="px-2 py-0.5 bg-amber-50 text-amber-700 text-xs rounded-full font-semibold">
+            📝 Briefing do Sumo Conselheiro
+          </span>
         ) : (
           <>
             {indicatorNames.slice(0, 3).map(n => (
@@ -661,10 +666,11 @@ function ReportModal({
         <div className="px-6 py-5 space-y-5 overflow-y-auto">
           {/* Tipo do relatório */}
           <Field label="Tipo de relatório">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {([
                 { value: 'summary' as const, title: 'Resumo de Indicadores', desc: 'Números, metas e ranking' },
                 { value: 'nominal' as const, title: 'Lista de Nomes', desc: 'Batismos, retornando, missionários' },
+                { value: 'sumo_briefing' as const, title: 'Briefing do Sumo', desc: 'Indicadores e pauta para o conselho da ala' },
               ]).map(opt => {
                 const active = form.report_type === opt.value
                 return (
