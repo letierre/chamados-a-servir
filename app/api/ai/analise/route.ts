@@ -51,12 +51,17 @@ ${JSON.stringify(body.historico_90_dias || [], null, 2)}`
 
     const anthropic = new Anthropic({ apiKey })
 
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 25_000)
+
     const msg = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 500,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
-    })
+    }, { signal: controller.signal })
+
+    clearTimeout(timeout)
 
     const text = msg.content
       .filter((block): block is Anthropic.TextBlock => block.type === 'text')
