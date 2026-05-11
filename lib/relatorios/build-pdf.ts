@@ -517,8 +517,9 @@ async function buildSumoBriefingPdf(
 
   const targetMatrix: Record<string, Record<string, number>> = {}
   const { data: targetsData, error: targetsError } = await supabase
-    .from('indicator_targets')
+    .from('targets')
     .select('indicator_id, ward_id, target_value')
+    .eq('year', new Date().getFullYear())
   if (targetsError) console.error('Erro ao carregar metas:', targetsError.message)
   if (targetsData) {
     for (const t of targetsData as { indicator_id: string; ward_id: string; target_value: number }[]) {

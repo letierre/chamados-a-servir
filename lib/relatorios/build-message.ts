@@ -446,8 +446,9 @@ async function buildSumoBriefingMessage(
 
   const targetMatrix: Record<string, Record<string, number>> = {}
   const { data: targetsData } = await supabase
-    .from('indicator_targets')
+    .from('targets')
     .select('indicator_id, ward_id, target_value')
+    .eq('year', new Date().getFullYear())
   if (targetsData) {
     for (const t of targetsData as { indicator_id: string; ward_id: string; target_value: number }[]) {
       if (!targetMatrix[t.indicator_id]) targetMatrix[t.indicator_id] = {}
