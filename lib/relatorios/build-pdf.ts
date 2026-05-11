@@ -744,8 +744,9 @@ async function buildSumoBriefingPdf(
             else color = [239, 68, 68]
             doc.setFillColor(...color)
             doc.rect(barX, barY, fillW, barH, 'F')
-            // Text over bar
-            doc.setTextColor(60, 60, 60)
+            // Text over bar — white for dark fills, dark for light fills
+            const textColor = (pct >= 80) ? 255 : 60
+            doc.setTextColor(textColor, textColor, textColor)
             doc.setFontSize(7)
             doc.setFont('helvetica', 'bold')
             doc.text(`${pct}%`, data.cell.x + data.cell.width / 2, barY + barH / 2 + 0.5, { align: 'center', baseline: 'middle' })
