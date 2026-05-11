@@ -110,7 +110,7 @@ async function buildSummaryMessage(
     supabase.rpc('get_dashboard_data_v2', { p_start: start, p_end: end }),
     supabase.from('baptism_records').select('ward_id').gte('baptism_date', yearStart).lte('baptism_date', end),
     supabase.from('returning_member_records').select('ward_id').gte('week_start', yearStart).lte('week_start', end),
-    supabase.from('missionary_records').select('ward_id').gte('mission_start_date', yearStart).lte('mission_start_date', end),
+    supabase.from('missionary_records').select('ward_id').lte('mission_start_date', end).or(`mission_end_date.is.null,mission_end_date.gte.${yearStart}`),
   ])
 
   if (rpcRes.error) throw new Error(`RPC get_dashboard_data_v2: ${rpcRes.error.message}`)
@@ -469,7 +469,7 @@ async function buildSumoBriefingMessage(
     supabase.rpc('get_dashboard_data_v2', { p_start: start, p_end: end }),
     supabase.from('baptism_records').select('ward_id').gte('baptism_date', yearStart).lte('baptism_date', end),
     supabase.from('returning_member_records').select('ward_id').gte('week_start', yearStart).lte('week_start', end),
-    supabase.from('missionary_records').select('ward_id').gte('mission_start_date', yearStart).lte('mission_start_date', end),
+    supabase.from('missionary_records').select('ward_id').lte('mission_start_date', end).or(`mission_end_date.is.null,mission_end_date.gte.${yearStart}`),
   ])
 
   if (baptismResult.error) console.error('Erro query batismos:', baptismResult.error.message)
