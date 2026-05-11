@@ -132,22 +132,46 @@ async function buildSummaryPdf(
   const { start, end } = getDateRange(config.period)
   const isLongPeriod = ['90d', '12m', 'current_year'].includes(config.period)
 
-  const [rpcRes, baptismByWardRes] = await Promise.all([
+  const yearStart = `${new Date(end).getFullYear()}-01-01`
+
+  const [rpcRes, baptismByWardRes, returningByWardRes, missionaryByWardRes] = await Promise.all([
     supabase.rpc('get_dashboard_data_v2', { p_start: start, p_end: end }),
-    supabase.from('baptism_records').select('ward_id').gte('baptism_date', start).lte('baptism_date', end),
+    supabase.from('baptism_records').select('ward_id').gte('baptism_date', yearStart).lte('baptism_date', end),
+    supabase.from('returning_member_records').select('ward_id').gte('week_start', yearStart).lte('week_start', end),
+    supabase.from('missionary_records').select('ward_id').gte('mission_start_date', yearStart).lte('mission_start_date', end),
   ])
   if (rpcRes.error) throw new Error(`RPC get_dashboard_data_v2: ${rpcRes.error.message}`)
+
+  if (baptismByWardRes.error) console.error('Erro query batismos:', baptismByWardRes.error.message)
+  if (returningByWardRes.error) console.error('Erro query retornando:', returningByWardRes.error.message)
+  if (missionaryByWardRes.error) console.error('Erro query missionários:', missionaryByWardRes.error.message)
+
   let rows: RpcRow[] = rpcRes.data || []
 
-  if (baptismByWardRes.data) {
-    const countByWard = new Map<string, number>()
-    for (const b of baptismByWardRes.data as { ward_id: string }[]) {
-      countByWard.set(b.ward_id, (countByWard.get(b.ward_id) || 0) + 1)
+  // Override nominal indicators with cumulative year-to-date counts
+  const nominalOverrides: Record<string, Map<string, number>> = {}
+  for (const [slug, data] of [
+    ['batismo_converso', baptismByWardRes.data],
+    ['membros_retornando_a_igreja', returningByWardRes.data],
+    ['missionario_servindo_missao_do_brasil', missionaryByWardRes.data],
+  ] as const) {
+    if (!data) { console.debug(`buildSummaryPdf: sem dados para ${slug}`); continue }
+    const map = new Map<string, number>()
+    for (const r of data as { ward_id: string }[]) {
+      map.set(r.ward_id, (map.get(r.ward_id) || 0) + 1)
     }
-    rows = rows.map(r =>
-      r.slug === 'batismo_converso' ? { ...r, computed_value: countByWard.get(r.ward_id) || 0 } : r,
-    )
+    nominalOverrides[slug] = map
+    console.debug(`buildSummaryPdf: ${slug} ->`, Object.fromEntries(map))
   }
+  rows = rows.map(r => {
+    const override = nominalOverrides[r.slug]
+    if (override) {
+      const newVal = override.get(r.ward_id) || 0
+      console.debug(`buildSummaryPdf: override ${r.slug} ${r.ward_name}: ${r.computed_value} -> ${newVal}`)
+      return { ...r, computed_value: newVal }
+    }
+    return r
+  })
 
   const filterByWards = config.ward_ids.length > 0
   const selectedWardSet = new Set(config.ward_ids)
@@ -162,8 +186,9 @@ async function buildSummaryPdf(
   const targetMatrix: Record<string, Record<string, number>> = {}
   if (config.include_targets) {
     const { data: targetsData } = await supabase
-      .from('indicator_targets')
+      .from('targets')
       .select('indicator_id, ward_id, target_value')
+      .eq('year', new Date().getFullYear())
     if (targetsData) {
       for (const t of targetsData as { indicator_id: string; ward_id: string; target_value: number }[]) {
         if (!targetMatrix[t.indicator_id]) targetMatrix[t.indicator_id] = {}
@@ -483,24 +508,50 @@ async function buildSumoBriefingPdf(
 ): Promise<jsPDF> {
   const { start, end } = getDateRange(config.period)
 
-  const [rpcRes, baptismByWardRes, wardsRes] = await Promise.all([
+  const yearStart = `${new Date(end).getFullYear()}-01-01`
+
+  const [rpcRes, baptismByWardRes, returningByWardRes, missionaryByWardRes, wardsRes] = await Promise.all([
     supabase.rpc('get_dashboard_data_v2', { p_start: start, p_end: end }),
-    supabase.from('baptism_records').select('ward_id').gte('baptism_date', start).lte('baptism_date', end),
+    supabase.from('baptism_records').select('ward_id').gte('baptism_date', yearStart).lte('baptism_date', end),
+    supabase.from('returning_member_records').select('ward_id').gte('week_start', yearStart).lte('week_start', end),
+    supabase.from('missionary_records').select('ward_id').gte('mission_start_date', yearStart).lte('mission_start_date', end),
     supabase.from('wards').select('id, name, membership_count'),
   ])
   if (rpcRes.error) throw new Error(`RPC get_dashboard_data_v2: ${rpcRes.error.message}`)
 
+  // Log errors nas queries nominais (não devem falhar silenciosamente)
+  if (baptismByWardRes.error) console.error('Erro query batismos:', baptismByWardRes.error.message)
+  if (returningByWardRes.error) console.error('Erro query retornando:', returningByWardRes.error.message)
+  if (missionaryByWardRes.error) console.error('Erro query missionários:', missionaryByWardRes.error.message)
+
   let rows = (rpcRes.data || []) as RpcRow[]
 
-  if (baptismByWardRes.data) {
-    const countByWard = new Map<string, number>()
-    for (const b of baptismByWardRes.data as { ward_id: string }[]) {
-      countByWard.set(b.ward_id, (countByWard.get(b.ward_id) || 0) + 1)
+  // Override nominal indicators with cumulative year-to-date counts
+  const nominalOverrides: Record<string, Map<string, number>> = {}
+  for (const [slug, data] of [
+    ['batismo_converso', baptismByWardRes.data],
+    ['membros_retornando_a_igreja', returningByWardRes.data],
+    ['missionario_servindo_missao_do_brasil', missionaryByWardRes.data],
+  ] as const) {
+    if (!data) { console.debug(`buildSumoBriefing: sem dados para ${slug}`); continue }
+    const map = new Map<string, number>()
+    for (const r of data as { ward_id: string }[]) {
+      map.set(r.ward_id, (map.get(r.ward_id) || 0) + 1)
     }
-    rows = rows.map(r =>
-      r.slug === 'batismo_converso' ? { ...r, computed_value: countByWard.get(r.ward_id) || 0 } : r,
-    )
+    nominalOverrides[slug] = map
+    console.debug(`buildSumoBriefing: ${slug} ->`, Object.fromEntries(map))
   }
+  rows = rows.map(r => {
+    const override = nominalOverrides[r.slug]
+    if (override) {
+      const newVal = override.get(r.ward_id) || 0
+      if (r.computed_value !== newVal) {
+        console.debug(`buildSumoBriefing: override ${r.slug} ${r.ward_name}: ${r.computed_value} -> ${newVal}`)
+      }
+      return { ...r, computed_value: newVal }
+    }
+    return r
+  })
 
   const filterByWards = config.ward_ids.length > 0
   const selectedWardSet = new Set(config.ward_ids)
@@ -680,13 +731,14 @@ async function buildSumoBriefingPdf(
             const barY = data.cell.y + data.cell.height * 0.25
             const barW = data.cell.width - 4
             const barH = data.cell.height * 0.5
-            const fillW = Math.max(0, (pct / 100) * barW)
+            const fillW = Math.min(barW, Math.max(0, (pct / 100) * barW))
             // Background
             doc.setFillColor(229, 231, 235)
             doc.rect(barX, barY, barW, barH, 'F')
-            // Fill color
+            // Fill color (capped at 100% — exceeding target uses a distinct blue)
             let color: [number, number, number]
-            if (pct >= 80) color = [34, 197, 94]
+            if (pct > 100) color = [30, 106, 141]
+            else if (pct >= 80) color = [34, 197, 94]
             else if (pct >= 50) color = [234, 179, 8]
             else if (pct >= 30) color = [249, 115, 22]
             else color = [239, 68, 68]

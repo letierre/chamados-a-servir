@@ -104,27 +104,49 @@ async function buildSummaryMessage(
   const { start, end } = getDateRange(config.period)
   const isLongPeriod = ['90d', '12m', 'current_year'].includes(config.period)
 
-  // 1) Dados do RPC + contagem nominal de batismos (mesma lógica do dashboard)
-  const [rpcRes, baptismByWardRes] = await Promise.all([
+  // 1) Dados do RPC + contagens nominais cumulativas (year-to-date até end)
+  const yearStart = `${new Date(end).getFullYear()}-01-01`
+  const [rpcRes, baptismByWardRes, returningByWardRes, missionaryByWardRes] = await Promise.all([
     supabase.rpc('get_dashboard_data_v2', { p_start: start, p_end: end }),
-    supabase.from('baptism_records').select('ward_id').gte('baptism_date', start).lte('baptism_date', end),
+    supabase.from('baptism_records').select('ward_id').gte('baptism_date', yearStart).lte('baptism_date', end),
+    supabase.from('returning_member_records').select('ward_id').gte('week_start', yearStart).lte('week_start', end),
+    supabase.from('missionary_records').select('ward_id').gte('mission_start_date', yearStart).lte('mission_start_date', end),
   ])
 
   if (rpcRes.error) throw new Error(`RPC get_dashboard_data_v2: ${rpcRes.error.message}`)
+
+  if (baptismByWardRes.error) console.error('Erro query batismos:', baptismByWardRes.error.message)
+  if (returningByWardRes.error) console.error('Erro query retornando:', returningByWardRes.error.message)
+  if (missionaryByWardRes.error) console.error('Erro query missionários:', missionaryByWardRes.error.message)
+
   let rows: RpcRow[] = rpcRes.data || []
 
-  // Override batismo nominal por ala
-  if (baptismByWardRes.data) {
-    const countByWard = new Map<string, number>()
-    for (const b of baptismByWardRes.data as { ward_id: string }[]) {
-      countByWard.set(b.ward_id, (countByWard.get(b.ward_id) || 0) + 1)
+  // Override nominal indicators with cumulative year-to-date counts
+  const nominalOverrides: Record<string, Map<string, number>> = {}
+  for (const [slug, data] of [
+    ['batismo_converso', baptismByWardRes.data],
+    ['membros_retornando_a_igreja', returningByWardRes.data],
+    ['missionario_servindo_missao_do_brasil', missionaryByWardRes.data],
+  ] as const) {
+    if (!data) { console.debug(`buildSummaryMessage: sem dados para ${slug}`); continue }
+    const map = new Map<string, number>()
+    for (const r of data as { ward_id: string }[]) {
+      map.set(r.ward_id, (map.get(r.ward_id) || 0) + 1)
     }
-    rows = rows.map(r =>
-      r.slug === 'batismo_converso'
-        ? { ...r, computed_value: countByWard.get(r.ward_id) || 0 }
-        : r,
-    )
+    nominalOverrides[slug] = map
+    console.debug(`buildSummaryMessage: ${slug} ->`, Object.fromEntries(map))
   }
+  rows = rows.map(r => {
+    const override = nominalOverrides[r.slug]
+    if (override) {
+      const newVal = override.get(r.ward_id) || 0
+      if (r.computed_value !== newVal) {
+        console.debug(`buildSummaryMessage: override ${r.slug} ${r.ward_name}: ${r.computed_value} -> ${newVal}`)
+      }
+      return { ...r, computed_value: newVal }
+    }
+    return r
+  })
 
   // 2) Filtrar por alas selecionadas (vazio = estaca inteira)
   const filterByWards = config.ward_ids.length > 0
@@ -146,8 +168,9 @@ async function buildSummaryMessage(
   const targetMatrix: Record<string, Record<string, number>> = {}
   if (config.include_targets) {
     const { data: targetsData } = await supabase
-      .from('indicator_targets')
+      .from('targets')
       .select('indicator_id, ward_id, target_value')
+      .eq('year', new Date().getFullYear())
     if (targetsData) {
       for (const t of targetsData as { indicator_id: string; ward_id: string; target_value: number }[]) {
         if (!targetMatrix[t.indicator_id]) targetMatrix[t.indicator_id] = {}
@@ -441,8 +464,46 @@ async function buildSumoBriefingMessage(
   const filterByWards = config.ward_ids.length > 0
   const selectedWardSet = new Set(config.ward_ids)
 
-  const { data: rpcData } = await supabase.rpc('get_dashboard_data_v2', { p_start: start, p_end: end })
-  const rows = (rpcData || []) as any[]
+  const yearStart = `${new Date(end).getFullYear()}-01-01`
+  const [rpcResult, baptismResult, returningResult, missionaryResult] = await Promise.all([
+    supabase.rpc('get_dashboard_data_v2', { p_start: start, p_end: end }),
+    supabase.from('baptism_records').select('ward_id').gte('baptism_date', yearStart).lte('baptism_date', end),
+    supabase.from('returning_member_records').select('ward_id').gte('week_start', yearStart).lte('week_start', end),
+    supabase.from('missionary_records').select('ward_id').gte('mission_start_date', yearStart).lte('mission_start_date', end),
+  ])
+
+  if (baptismResult.error) console.error('Erro query batismos:', baptismResult.error.message)
+  if (returningResult.error) console.error('Erro query retornando:', returningResult.error.message)
+  if (missionaryResult.error) console.error('Erro query missionários:', missionaryResult.error.message)
+
+  let rows = (rpcResult.data || []) as any[]
+
+  // Override nominal indicators with cumulative year-to-date counts
+  const nominalOverrides: Record<string, Map<string, number>> = {}
+  for (const [slug, data] of [
+    ['batismo_converso', baptismResult.data],
+    ['membros_retornando_a_igreja', returningResult.data],
+    ['missionario_servindo_missao_do_brasil', missionaryResult.data],
+  ] as const) {
+    if (!data) { console.debug(`buildSumoBriefingMsg: sem dados para ${slug}`); continue }
+    const map = new Map<string, number>()
+    for (const r of data as { ward_id: string }[]) {
+      map.set(r.ward_id, (map.get(r.ward_id) || 0) + 1)
+    }
+    nominalOverrides[slug] = map
+    console.debug(`buildSumoBriefingMsg: ${slug} ->`, Object.fromEntries(map))
+  }
+  rows = rows.map((r: any) => {
+    const override = nominalOverrides[r.slug]
+    if (override) {
+      const newVal = override.get(r.ward_id) || 0
+      if (r.computed_value !== newVal) {
+        console.debug(`buildSumoBriefingMsg: override ${r.slug} ${r.ward_name}: ${r.computed_value} -> ${newVal}`)
+      }
+      return { ...r, computed_value: newVal }
+    }
+    return r
+  })
 
   const targetMatrix: Record<string, Record<string, number>> = {}
   const { data: targetsData } = await supabase
