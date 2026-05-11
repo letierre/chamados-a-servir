@@ -564,15 +564,27 @@ async function buildSumoBriefingPdf(
   // ── AI Analysis ──
   let aiAnalysis = ''
   try {
+    // Agrega métricas por indicador (deduplicado, com progresso calculado)
+    const metricsForAI: { indicador: string; valor_atual: number; meta: number; progresso: number }[] = []
+    const seenMetrics = new Set<string>()
+    for (const ward of wards) {
+      for (const entry of (wardIndicators.get(ward.id) || [])) {
+        const key = `${ward.id}:${entry.slug}`
+        if (seenMetrics.has(key)) continue
+        seenMetrics.add(key)
+        metricsForAI.push({
+          indicador: entry.display_name,
+          valor_atual: entry.value,
+          meta: entry.target || 0,
+          progresso: entry.progress,
+        })
+      }
+    }
     const aiPayload = {
       unidade: wards.map(w => w.name).join(', '),
       data_analise: new Date().toLocaleDateString('pt-BR'),
       periodo_selecionado: PERIOD_LABELS[config.period],
-      metricas_atuais: filteredRows.map(r => ({
-        indicador: r.display_name,
-        valor_atual: r.computed_value,
-        meta: targetMatrix[r.indicator_id]?.[r.ward_id] || 0,
-      })),
+      metricas_atuais: metricsForAI,
       historico_90_dias: [] as any[],
       modo: 'sumo',
     }
