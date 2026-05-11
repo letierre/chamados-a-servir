@@ -455,7 +455,7 @@ export default function DashboardPage() {
       const period = selectedPeriod === 'custom' ? 'current_month' : selectedPeriod
       const cfg: ReportConfig = {
         id: 'sumo-dashboard',
-        name: `Briefing do Sumo — ${selectedWardName}`,
+        name: `Relatório do Sumo — ${selectedWardName}`,
         recipient_whatsapp: '',
         frequency: 'daily',
         send_time: '08:00',
@@ -471,8 +471,18 @@ export default function DashboardPage() {
       const supabase = createClient()
       const doc = await buildReportPdf(supabase, cfg)
       doc.save(safeFileName(cfg.name))
+      // Salva no histórico
+      const { data: session } = await supabase.auth.getSession()
+      if (session.session?.user?.id) {
+        await supabase.from('generated_documents').insert({
+          user_id: session.session.user.id,
+          name: cfg.name,
+          report_type: cfg.report_type,
+          ward_name: selectedWardName,
+        })
+      }
     } catch (error) {
-      console.error('Erro briefing sumo:', error)
+      console.error('Erro relatório do sumo:', error)
     } finally { setSumoBriefingLoading(false) }
   }
 
@@ -656,7 +666,7 @@ export default function DashboardPage() {
                 <button onClick={handleGenerateSumoBriefing} disabled={sumoBriefingLoading}
                   className="flex items-center gap-1.5 px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-[10px] md:text-xs font-bold rounded-lg transition-colors shadow-sm disabled:opacity-50 shrink-0">
                   {sumoBriefingLoading ? <Loader2 size={14} className="animate-spin" /> : <ClipboardList size={14} />}
-                  <span className="hidden sm:inline">Briefing do Sumo</span><span className="sm:hidden">Sumo</span>
+                  <span className="hidden sm:inline">Relatório do Sumo</span><span className="sm:hidden">Sumo</span>
                 </button>
                 <button onClick={handlePrintXRay}
                   className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white text-[10px] md:text-xs font-bold rounded-lg transition-colors shadow-sm shrink-0">

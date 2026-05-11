@@ -477,37 +477,6 @@ async function buildNominalPdf(
 // BRIEFING SUMO CONSELHEIRO
 // ═══════════════════════════════════════
 
-const SUMO_SYSTEM_PROMPT = `Você é um assistente que prepara briefings para sumos conselheiros de A Igreja de Jesus Cristo dos Santos dos Últimos Dias.
-
-O sumo conselheiro é designado pela presidência da estaca para acompanhar uma ala específica. Ele participa do conselho da ala e orienta os líderes locais. Ele recebe este briefing antes da reunião de conselho.
-
-Seu papel é fornecer:
-- Um resumo claro e direto do desempenho da unidade nos indicadores
-- Pontos específicos que ele deve levar para discussão no conselho da ala
-- Perguntas sugeridas para fazer aos líderes durante a reunião
-
-TOM:
-- Direto, sereno, prático. Nada de linguagem piegas ou "evangélica".
-- Fale SOBRE a unidade, não PARA a unidade.
-- Seja específico: mencione números, indicadores, tendências.
-
-ESTRUTURA:
-**Resumo**
-2-3 frases sobre o panorama geral da unidade.
-
-**Para discutir no conselho**
-- Ponto específico com dados.
-- Ponto específico com dados.
-
-**Perguntas sugeridas**
-- Pergunta prática para fazer na reunião.
-- Pergunta prática para fazer na reunião.
-
-REGRAS:
-- Máximo 150 palavras.
-- Vá direto ao ponto, sem introduções.
-- Use markdown simples.`
-
 async function buildSumoBriefingPdf(
   supabase: SupabaseClient,
   config: ReportConfig,
@@ -547,9 +516,10 @@ async function buildSumoBriefingPdf(
     .sort((a, b) => a.name.localeCompare(b.name))
 
   const targetMatrix: Record<string, Record<string, number>> = {}
-  const { data: targetsData } = await supabase
+  const { data: targetsData, error: targetsError } = await supabase
     .from('indicator_targets')
     .select('indicator_id, ward_id, target_value')
+  if (targetsError) console.error('Erro ao carregar metas:', targetsError.message)
   if (targetsData) {
     for (const t of targetsData as { indicator_id: string; ward_id: string; target_value: number }[]) {
       if (!targetMatrix[t.indicator_id]) targetMatrix[t.indicator_id] = {}
@@ -620,7 +590,7 @@ async function buildSumoBriefingPdf(
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   const wardNames = wards.map(w => w.name).join(', ')
   const subtitle = `${PERIOD_LABELS[config.period]} · ${filterByWards ? wardNames : 'Estaca (todas as alas)'}`
-  const title = `Briefing para Sumo Conselheiro`
+  const title = `Relatório do Sumo Conselheiro`
 
   drawHeader(doc, title, subtitle)
 
@@ -639,7 +609,7 @@ async function buildSumoBriefingPdf(
   doc.setFont('helvetica', 'normal')
   doc.setTextColor(60, 60, 60)
   for (const ward of wards) {
-    doc.text(`Ala ${ward.name}: ${ward.membership} membros registrados`, 14, y)
+    doc.text(`${ward.name}: ${ward.membership} membros registrados`, 14, y)
     y += 5
   }
   y += 3
@@ -726,7 +696,7 @@ async function buildSumoBriefingPdf(
     doc.setFontSize(9)
     doc.setFont('helvetica', 'normal')
     doc.setTextColor(60, 60, 60)
-    const lines = doc.splitTextToSize(aiAnalysis, pageWidth - 28)
+    const lines = doc.splitTextToSize(cleanMarkdown(aiAnalysis), pageWidth - 28)
     doc.text(lines, 14, y)
     y += lines.length * 4.5 + 4
   }
@@ -748,6 +718,16 @@ async function buildSumoBriefingPdf(
 // HELPER: salvar com nome amigável
 // ═══════════════════════════════════════
 
+function cleanMarkdown(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '$1')    // **bold** → plain
+    .replace(/\*(.+?)\*/g, '$1')        // *italic* → plain
+    .replace(/^#{1,4}\s+/gm, '')       // ## headers
+    .replace(/^---+\s*$/gm, '')         // horizontal rules
+    .replace(/\n{3,}/g, '\n\n')         // max 2 consecutive line breaks
+    .trim()
+}
+
 export function safeFileName(name: string): string {
   const today = new Date().toISOString().split('T')[0]
   const slug = name
@@ -757,5 +737,5 @@ export function safeFileName(name: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 60)
-  return `relatorio-${slug || 'sem-nome'}-${today}.pdf`
+  return `${slug || 'documento'}-${today}.pdf`
 }

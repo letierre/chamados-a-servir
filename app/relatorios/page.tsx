@@ -147,6 +147,8 @@ export default function RelatoriosPage() {
   const [sendingId, setSendingId] = useState<string | null>(null)
   const [pdfId, setPdfId] = useState<string | null>(null)
   const [toast, setToast] = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
+  const [docHistory, setDocHistory] = useState<{ id: string; name: string; report_type: string; ward_name: string | null; created_at: string }[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
 
   const showToast = useCallback((type: 'ok' | 'error', text: string) => {
     setToast({ type, text })
@@ -168,6 +170,22 @@ export default function RelatoriosPage() {
   }, [supabase])
 
   useEffect(() => { loadAll() }, [loadAll])
+
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true)
+    const { data: session } = await supabase.auth.getSession()
+    if (!session.session?.user?.id) { setHistoryLoading(false); return }
+    const { data } = await supabase
+      .from('generated_documents')
+      .select('id, name, report_type, ward_name, created_at')
+      .eq('user_id', session.session.user.id)
+      .order('created_at', { ascending: false })
+      .limit(15)
+    if (data) setDocHistory(data as any[])
+    setHistoryLoading(false)
+  }, [supabase])
+
+  useEffect(() => { loadHistory() }, [loadHistory])
 
   // ─── Ações ───
   function openNew() {
@@ -291,6 +309,17 @@ export default function RelatoriosPage() {
     }
   }
 
+  async function handleDeleteHistory(id: string) {
+    await supabase.from('generated_documents').delete().eq('id', id)
+    setDocHistory(prev => prev.filter(d => d.id !== id))
+  }
+
+  const REPORT_TYPE_LABELS: Record<string, string> = {
+    summary: 'Resumo de Indicadores',
+    nominal: 'Lista de Nomes',
+    sumo_briefing: 'Relatório do Sumo',
+  }
+
   function openPdfManual() {
     setPdfManualForm({
       ...DEFAULT_FORM,
@@ -329,8 +358,22 @@ export default function RelatoriosPage() {
       }
       const doc = await buildReportPdf(supabase, cfg)
       doc.save(safeFileName(cfg.name))
+      // Salva no histórico
+      const { data: session } = await supabase.auth.getSession()
+      if (session.session?.user?.id) {
+        const wardLabel = pdfManualForm.ward_ids.length === 0
+          ? 'Estaca (todas as alas)'
+          : pdfManualForm.ward_ids.map(id => wards.find(w => w.id === id)?.name).filter(Boolean).join(', ')
+        await supabase.from('generated_documents').insert({
+          user_id: session.session.user.id,
+          name: cfg.name,
+          report_type: cfg.report_type,
+          ward_name: wardLabel || '—',
+        })
+      }
       showToast('ok', 'PDF gerado!')
       setPdfManualOpen(false)
+      loadHistory()
     } catch (err) {
       showToast('error', err instanceof Error ? err.message : 'Erro ao gerar PDF')
     } finally {
@@ -429,6 +472,52 @@ export default function RelatoriosPage() {
               onDownloadPdf={() => handleDownloadPdf(cfg)}
             />
           ))}
+        </div>
+      )}
+
+      {/* Histórico de documentos gerados */}
+      {docHistory.length > 0 && (
+        <div className="mt-10">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider">Histórico de Documentos</h3>
+            <button onClick={loadHistory} className="text-xs text-sky-600 hover:text-sky-800 font-semibold">
+              {historyLoading ? <Loader2 size={12} className="animate-spin inline" /> : 'Atualizar'}
+            </button>
+          </div>
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 text-gray-500 text-xs uppercase">
+                  <th className="text-left px-4 py-2 font-semibold">Documento</th>
+                  <th className="text-left px-4 py-2 font-semibold hidden sm:table-cell">Tipo</th>
+                  <th className="text-left px-4 py-2 font-semibold hidden md:table-cell">Unidade</th>
+                  <th className="text-left px-4 py-2 font-semibold hidden md:table-cell">Data</th>
+                  <th className="px-4 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {docHistory.map(doc => (
+                  <tr key={doc.id} className="border-t border-gray-50 hover:bg-gray-50/50">
+                    <td className="px-4 py-2.5 font-medium text-gray-800 truncate max-w-[180px]">{doc.name}</td>
+                    <td className="px-4 py-2.5 text-gray-600 hidden sm:table-cell">{REPORT_TYPE_LABELS[doc.report_type] || doc.report_type}</td>
+                    <td className="px-4 py-2.5 text-gray-600 hidden md:table-cell truncate max-w-[150px]">{doc.ward_name || '—'}</td>
+                    <td className="px-4 py-2.5 text-gray-500 text-xs hidden md:table-cell">
+                      {new Date(doc.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <button
+                        onClick={() => handleDeleteHistory(doc.id)}
+                        className="text-gray-400 hover:text-red-500 transition-colors p-1"
+                        title="Remover do histórico"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -543,7 +632,7 @@ function ReportCard({
           </>
         ) : cfg.report_type === 'sumo_briefing' ? (
           <span className="px-2 py-0.5 bg-amber-50 text-amber-700 text-xs rounded-full font-semibold">
-            📝 Briefing do Sumo Conselheiro
+            📝 Relatório do Sumo Conselheiro
           </span>
         ) : (
           <>
@@ -670,7 +759,7 @@ function ReportModal({
               {([
                 { value: 'summary' as const, title: 'Resumo de Indicadores', desc: 'Números, metas e ranking' },
                 { value: 'nominal' as const, title: 'Lista de Nomes', desc: 'Batismos, retornando, missionários' },
-                { value: 'sumo_briefing' as const, title: 'Briefing do Sumo', desc: 'Indicadores e pauta para o conselho da ala' },
+                { value: 'sumo_briefing' as const, title: 'Relatório do Sumo', desc: 'Indicadores e pauta para o conselho da ala' },
               ]).map(opt => {
                 const active = form.report_type === opt.value
                 return (
