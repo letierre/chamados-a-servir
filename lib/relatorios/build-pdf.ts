@@ -667,22 +667,38 @@ async function buildSumoBriefingPdf(
       margin: { left: 14, right: 14 },
       columnStyles: {
         0: { cellWidth: 'auto' },
-        1: { cellWidth: 22, halign: 'right' },
-        2: { cellWidth: 22, halign: 'right' },
-        3: { cellWidth: 28, halign: 'right' },
+        1: { cellWidth: 18, halign: 'right' },
+        2: { cellWidth: 18, halign: 'right' },
+        3: { cellWidth: 42, halign: 'center' },
       },
       didDrawCell: (data: any) => {
         if (data.section === 'body' && data.column.index === 3 && data.cell.raw) {
           const raw = data.cell.raw as string
           const pct = parseInt(raw)
           if (!isNaN(pct)) {
-            if (pct >= 80) {
-              doc.setFillColor(220, 252, 231)
-              doc.rect(data.cell.x, data.cell.y, data.cell.width, data.cell.height, 'F')
-            } else if (pct < 40) {
-              doc.setFillColor(254, 226, 226)
-              doc.rect(data.cell.x, data.cell.y, data.cell.width, data.cell.height, 'F')
-            }
+            const barX = data.cell.x + 2
+            const barY = data.cell.y + data.cell.height * 0.25
+            const barW = data.cell.width - 4
+            const barH = data.cell.height * 0.5
+            const fillW = Math.max(0, (pct / 100) * barW)
+            // Background
+            doc.setFillColor(229, 231, 235)
+            doc.rect(barX, barY, barW, barH, 'F')
+            // Fill color
+            let color: [number, number, number]
+            if (pct >= 80) color = [34, 197, 94]
+            else if (pct >= 50) color = [234, 179, 8]
+            else if (pct >= 30) color = [249, 115, 22]
+            else color = [239, 68, 68]
+            doc.setFillColor(...color)
+            doc.rect(barX, barY, fillW, barH, 'F')
+            // Text over bar
+            doc.setTextColor(60, 60, 60)
+            doc.setFontSize(7)
+            doc.setFont('helvetica', 'bold')
+            doc.text(`${pct}%`, data.cell.x + data.cell.width / 2, barY + barH / 2 + 0.5, { align: 'center', baseline: 'middle' })
+            // Reset text color for subsequent cells
+            doc.setTextColor(0, 0, 0)
           }
         }
       },
