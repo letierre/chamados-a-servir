@@ -141,12 +141,16 @@ export default function InteligenciaPage() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
   const loadAnalyses = useCallback(async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('ai_analyses')
       .select('id, generated_at, week_start, content, trigger_type')
       .order('generated_at', { ascending: false })
       .limit(8)
-    setAnalyses(data ?? [])
+    if (error) {
+      setError('Tabela de análises não encontrada. Execute o arquivo docs/ai-analise-migration.sql no Supabase antes de usar este módulo.')
+    } else {
+      setAnalyses(data ?? [])
+    }
     setLoading(false)
   }, [supabase])
 

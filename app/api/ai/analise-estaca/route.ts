@@ -238,11 +238,18 @@ export async function POST(request: Request) {
 
     // ── 7. Save to ai_analyses
     if (saveResult) {
-      await supabase.from('ai_analyses').insert({
+      const { error: saveErr } = await supabase.from('ai_analyses').insert({
         week_start: sundays[0],
         content: analise,
         trigger_type: triggerType,
       })
+      if (saveErr) {
+        console.error('Erro ao salvar análise:', saveErr.message)
+        return NextResponse.json(
+          { error: `Análise gerada mas não foi possível salvar: ${saveErr.message}. Verifique se a tabela ai_analyses foi criada no Supabase (docs/ai-analise-migration.sql).` },
+          { status: 500 },
+        )
+      }
     }
 
     return NextResponse.json({ analise, week_start: sundays[0] })
