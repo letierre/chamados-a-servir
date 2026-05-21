@@ -217,6 +217,10 @@ export default function LancamentosPage() {
   // True quando o usuário começou a digitar nomes que ainda não foram salvos.
   // Evita que mudanças em weekStart/wardId apaguem entradas em andamento.
   const nominalDirtyRef = useRef(false)
+  // Semanas dos registros originalmente carregados do banco — necessário para
+  // detectar linhas removidas pelo usuário (que saem de nominalPersons mas
+  // ainda precisam ser deletadas no banco durante o save).
+  const loadedNominalWeeksRef = useRef<Set<string>>(new Set())
   // True quando os nomes/missionários atualmente exibidos vieram do banco
   // (estamos editando registros existentes), false se for entrada nova.
   const [nominalLoadedFromDb, setNominalLoadedFromDb] = useState(false)
@@ -366,10 +370,12 @@ export default function LancamentosPage() {
             baptism_date: d.baptism_date || '',
             week_start_record: d.week_start,
           })))
+          loadedNominalWeeksRef.current = new Set(data.map((d: { week_start: string }) => d.week_start).filter(Boolean))
           nominalDirtyRef.current = false
           setNominalLoadedFromDb(true)
         } else if (!nominalDirtyRef.current) {
           setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
+          loadedNominalWeeksRef.current = new Set()
           setNominalLoadedFromDb(false)
         }
       } else if (isRetornando) {
@@ -390,10 +396,12 @@ export default function LancamentosPage() {
             baptism_date: '',
             week_start_record: d.week_start,
           })))
+          loadedNominalWeeksRef.current = new Set(data.map((d: { week_start: string }) => d.week_start).filter(Boolean))
           nominalDirtyRef.current = false
           setNominalLoadedFromDb(true)
         } else if (!nominalDirtyRef.current) {
           setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
+          loadedNominalWeeksRef.current = new Set()
           setNominalLoadedFromDb(false)
         }
       }
@@ -616,15 +624,16 @@ export default function LancamentosPage() {
         const tableName = isBatismo ? 'baptism_records' : 'returning_member_records'
         const recordLabel = isBatismo ? 'batismo' : 'membro retornando'
 
-        // Coleta semanas afetadas: dos registros do form + de TODAS as linhas
-        // originais carregadas (para detectar removidos)
+        // Coleta semanas afetadas: dos registros do form + das semanas
+        // originalmente carregadas do banco (garante que linhas removidas
+        // pelo usuário também sejam deletadas no banco).
         const weeksAffected = new Set<string>()
         for (const p of validPersons) {
           const w = p.id ? p.week_start_record : weekStart
           if (w) weeksAffected.add(w)
         }
-        for (const p of nominalPersons) {
-          if (p.id && p.week_start_record) weeksAffected.add(p.week_start_record)
+        for (const w of loadedNominalWeeksRef.current) {
+          weeksAffected.add(w)
         }
 
         // Para cada semana, decide quais linhas pertencem a ela e reescreve.
@@ -667,6 +676,7 @@ export default function LancamentosPage() {
 
         setToast({ type: 'success', text: `${validPersons.length} ${recordLabel}(s) registrado(s) na ala!` })
         nominalDirtyRef.current = false
+        loadedNominalWeeksRef.current = new Set()
         // Recarrega os registros para atualizar ids/week_start_record
         // (o useEffect de loadExisting depende de wardId; um truque é forçar refetch)
         const { data: refreshed } = await supabase
