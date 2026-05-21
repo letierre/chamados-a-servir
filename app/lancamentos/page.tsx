@@ -1063,11 +1063,10 @@ export default function LancamentosPage() {
                                     <span className="text-[9px] font-bold text-emerald-600 mt-0.5">{cell.value}</span>
                                   </div>
                                 ) : cell?.reviewed ? (
-                                  <button onClick={() => handleUnmarkReviewed(ward.id, ind.id)}
-                                    className="flex flex-col items-center group" title="Clique para desmarcar">
-                                    <Eye size={16} className="text-sky-500 group-hover:text-sky-700" />
+                                  <div className="flex flex-col items-center" title="Revisado — sem novidade">
+                                    <Eye size={16} className="text-sky-500" />
                                     <span className="text-[8px] font-bold text-sky-400 mt-0.5">ok</span>
-                                  </button>
+                                  </div>
                                 ) : (
                                   <button onClick={() => handleMarkReviewed(ward.id, ind.id)}
                                     className="w-4 h-4 mx-auto rounded-full border-2 border-slate-200 hover:border-sky-400 hover:bg-sky-50 transition-all cursor-pointer"
@@ -1488,12 +1487,16 @@ export default function LancamentosPage() {
                   </button>
 
                   {/* Botão "Sem novidade" */}
-                  {selectedSlug && wardId && weekStart && !isMissionario && (
-                    <button type="button" onClick={handleMarkReviewedFromForm} disabled={submitting}
-                      className="w-full flex items-center justify-center gap-2 py-3 text-sky-600 bg-sky-50 border border-sky-100 font-bold text-sm rounded-xl hover:bg-sky-100 transition-all disabled:opacity-50">
-                      <Eye size={16} /> Sem novidade — marcar como revisado
-                    </button>
-                  )}
+                  {(() => {
+                    const cellStatus = statusMap.get(`${wardId}-${indicatorId}`)
+                    const cellDone = cellStatus?.launched || cellStatus?.reviewed
+                    return selectedSlug && wardId && weekStart && !cellDone && (
+                      <button type="button" onClick={handleMarkReviewedFromForm} disabled={submitting}
+                        className="w-full flex items-center justify-center gap-2 py-3 text-sky-600 bg-sky-50 border border-sky-100 font-bold text-sm rounded-xl hover:bg-sky-100 transition-all disabled:opacity-50">
+                        <Eye size={16} /> Sem novidade — marcar como revisado
+                      </button>
+                    )
+                  })()}
                 </div>
               </form>
             </div>
