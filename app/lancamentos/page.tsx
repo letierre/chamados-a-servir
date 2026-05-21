@@ -156,17 +156,12 @@ function getRecentSundays(count: number): string[] {
 // VALIDAÇÃO
 // ═══════════════════════════════════════
 
-function validateForm(value: number, weekStart: string, skipDateRange?: boolean): string | null {
+function validateForm(value: number, weekStart: string): string | null {
   if (!weekStart) return 'Selecione uma data.'
   if (isNaN(value) || value < 0) return 'Valor deve ser positivo.'
   if (value > 10000) return 'Valor parece muito alto. Verifique.'
   const today = new Date().toISOString().split('T')[0]
   if (weekStart > today) return 'Não é possível usar datas futuras.'
-  if (!skipDateRange) {
-    const limit = new Date()
-    limit.setDate(limit.getDate() - 90)
-    if (weekStart < limit.toISOString().split('T')[0]) return 'Data muito antiga (máximo 90 dias).'
-  }
   const d = new Date(weekStart + 'T12:00:00')
   if (d.getDay() !== 0) return 'A data deve ser um domingo.'
   return null
@@ -609,7 +604,7 @@ export default function LancamentosPage() {
           return
         }
         if (hasNewRow) {
-          const dateErr = validateForm(0, weekStart, true)
+          const dateErr = validateForm(0, weekStart)
           if (dateErr && dateErr !== 'Valor deve ser positivo.') { setFormError(dateErr); return }
         }
 
