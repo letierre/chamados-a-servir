@@ -1021,8 +1021,8 @@ export default function LancamentosPage() {
                     <tr className="border-b border-slate-100">
                       <th className="text-left p-2 md:p-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider sticky left-0 bg-white z-10 min-w-[100px]">Unidade</th>
                       {statusIndicators.map(ind => (
-                        <th key={ind.id} className="text-center p-1 md:p-2 text-[8px] md:text-[9px] font-black text-slate-400 uppercase max-w-[60px] md:max-w-[80px]">
-                          <span className="block truncate">{ind.name.replace('Recomendações para o Templo - Membros ', 'Rec. ').replace('Frequência da Reunião Sacramental', 'Freq. Sacr.').replace('Membros Retornando à Igreja', 'Retorn.').replace('Membros Participantes', 'Particip.').replace('Membros Jejuando', 'Jejum').replace('Batismos de Conversos', 'Batismos').replace('Missionários Servindo do Brasil', 'Mission.')}</span>
+                        <th key={ind.id} className="text-center p-1 md:p-2 text-[8px] md:text-[9px] font-black text-slate-400 uppercase w-[60px] md:w-[80px]">
+                          <span className="block leading-tight">{ind.name.replace('Recomendações para o Templo - Membros ', 'Rec. ').replace('Frequência da Reunião Sacramental', 'Freq. Sacr.').replace('Membros Retornando à Igreja', 'Retorn.').replace('Membros Participantes', 'Particip.').replace('Membros Jejuando', 'Jejum').replace('Batismos de Conversos', 'Batismos').replace('Missionários Servindo do Brasil', 'Mission.')}</span>
                         </th>
                       ))}
                       <th className="text-center p-2 text-[9px] font-black text-slate-400 uppercase">Status</th>
