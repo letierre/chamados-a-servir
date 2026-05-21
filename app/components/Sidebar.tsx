@@ -13,20 +13,31 @@ import {
   MessageSquare,
   LogOut,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  AlertTriangle,
 } from 'lucide-react'
 
 export default function Sidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [mounted, setMounted] = useState(false)
+  const [pendingCount, setPendingCount] = useState<number>(0)
   const pathname = usePathname()
   const router = useRouter() // <--- Essa é a correta, mantenha esta.
-  
+
   // CORREÇÃO 2: Instanciar usando o helper correto do Next.js
   const supabase = createClient()
 
   useEffect(() => {
     setMounted(true)
+  }, [])
+
+  useEffect(() => {
+    async function loadPendingCount() {
+      const { data } = await supabase.rpc('get_pending_count')
+      if (data != null) setPendingCount(data)
+    }
+    loadPendingCount()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleLogout = async () => {
@@ -45,10 +56,11 @@ export default function Sidebar() {
     }
   }
 
-  const menuItems: Array<{ name: string; path: string; icon: typeof LayoutDashboard; badge?: string }> = [
+  const menuItems: Array<{ name: string; path: string; icon: typeof LayoutDashboard; badge?: string; count?: number }> = [
     { name: 'Dashboard', path: '/', icon: LayoutDashboard },
     { name: 'Lançamentos', path: '/lancamentos', icon: FileText },
     { name: 'Histórico', path: '/historico', icon: History },
+    { name: 'Pendências', path: '/pendencias', icon: AlertTriangle, count: pendingCount },
     { name: 'Relatórios', path: '/relatorios', icon: MessageSquare, badge: 'Em breve' },
   ]
 
@@ -98,10 +110,15 @@ export default function Sidebar() {
                 }
               `}
             >
-              <item.icon 
-                size={22} 
-                className={`flex-shrink-0 ${isActive ? 'text-white' : ''}`} 
-              />
+              <span className="relative flex-shrink-0">
+                <item.icon
+                  size={22}
+                  className={isActive ? 'text-white' : ''}
+                />
+                {item.count != null && item.count > 0 && isCollapsed && (
+                  <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500 border border-white" />
+                )}
+              </span>
               
               {!isCollapsed && (
                 <span className={`
@@ -114,6 +131,13 @@ export default function Sidebar() {
                       isActive ? 'bg-white/25 text-white' : 'bg-amber-100 text-amber-800'
                     }`}>
                       {item.badge}
+                    </span>
+                  )}
+                  {item.count != null && item.count > 0 && (
+                    <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold leading-none ${
+                      isActive ? 'bg-white/25 text-white' : 'bg-red-500 text-white'
+                    }`}>
+                      {item.count > 99 ? '99+' : item.count}
                     </span>
                   )}
                 </span>

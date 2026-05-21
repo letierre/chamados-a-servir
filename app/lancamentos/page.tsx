@@ -236,7 +236,7 @@ export default function LancamentosPage() {
   const [weeklyStatus, setWeeklyStatus] = useState<WeeklyStatusRow[]>([])
   const [loadingStatus, setLoadingStatus] = useState(false)
   const [reviewingCell, setReviewingCell] = useState<string | null>(null)
-  const availableSundays = getRecentSundays(12)
+  const [availableSundays, setAvailableSundays] = useState(() => getRecentSundays(12))
 
   // Domingos sem reunião (conferências)
   const [skipWeeks, setSkipWeeks] = useState<SkipWeek[]>([])
@@ -278,6 +278,19 @@ export default function LancamentosPage() {
   const quickLink = selectedWard && selectedSlug
     ? INDICATOR_LINKS[selectedSlug]?.(selectedWard.name) ?? null
     : null
+
+  // ─── Lê ?semana= da URL e navega para aquele domingo no controle ───
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const semana = new URLSearchParams(window.location.search).get('semana')
+    if (!semana) return
+    const d = new Date(semana + 'T12:00:00')
+    if (isNaN(d.getTime()) || d.getDay() !== 0) return
+    setControlSunday(semana)
+    setAvailableSundays(prev =>
+      prev.includes(semana) ? prev : [semana, ...prev].sort().reverse()
+    )
+  }, [])
 
   // Reset ao mudar ala ou indicador
   useEffect(() => {
