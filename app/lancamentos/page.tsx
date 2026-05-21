@@ -204,7 +204,7 @@ export default function LancamentosPage() {
   const [wardId, setWardId] = useState('')
   const [indicatorId, setIndicatorId] = useState('')
   const [value, setValue] = useState('')
-  const [weekStart, setWeekStart] = useState('')
+  const [weekStart, setWeekStart] = useState(() => getRecentSundays(1)[0])
 
   // Campos extras
   const [valueRecomSem, setValueRecomSem] = useState('')
@@ -273,6 +273,11 @@ export default function LancamentosPage() {
   const quickLink = selectedWard && selectedSlug
     ? INDICATOR_LINKS[selectedSlug]?.(selectedWard.name) ?? null
     : null
+
+  // ─── Sincroniza data do formulário com o domingo selecionado no controle ───
+  useEffect(() => {
+    setWeekStart(controlSunday)
+  }, [controlSunday])
 
   // ─── Lê ?semana= da URL e navega para aquele domingo no controle ───
   useEffect(() => {
