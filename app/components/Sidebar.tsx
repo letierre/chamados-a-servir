@@ -63,7 +63,7 @@ export default function Sidebar() {
     { name: 'Histórico', path: '/historico', icon: History },
     { name: 'Pendências', path: '/pendencias', icon: AlertTriangle, count: pendingCount },
     { name: 'Inteligência', path: '/inteligencia', icon: Brain },
-    { name: 'Relatórios', path: '/relatorios', icon: MessageSquare, badge: 'Em breve' },
+    { name: 'Relatórios', path: '/relatorios', icon: MessageSquare },
   ]
 
   return (

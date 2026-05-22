@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '../../lib/supabase/client'
 import {
-  Bell, Plus, Pencil, Trash2, Send, Power, PowerOff,
-  X, Loader2, CheckCircle2, AlertCircle, Clock, Calendar, MessageSquare, FileDown,
+  Bell, Plus, Pencil, Trash2, Send,
+  X, Loader2, CheckCircle2, AlertCircle, Clock, MessageSquare, FileDown,
 } from 'lucide-react'
 import { buildReportPdf, safeFileName } from '../../lib/relatorios/build-pdf'
 import type { ReportConfig as PdfReportConfig } from '../../lib/relatorios/build-message'
@@ -116,12 +116,6 @@ function formatDateTime(iso: string | null): string {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   })
-}
-
-function describeSchedule(cfg: ReportConfig): string {
-  if (cfg.frequency === 'daily') return `Todo dia às ${cfg.send_time}`
-  if (cfg.frequency === 'weekly') return `Toda ${WEEKDAYS[cfg.send_day ?? 0]} às ${cfg.send_time}`
-  return `Todo dia ${cfg.send_day} às ${cfg.send_time}`
 }
 
 // ═══════════════════════════════════════
@@ -268,15 +262,6 @@ export default function RelatoriosPage() {
     loadAll()
   }
 
-  async function handleToggleActive(cfg: ReportConfig) {
-    const { error } = await supabase
-      .from('report_configs')
-      .update({ is_active: !cfg.is_active })
-      .eq('id', cfg.id)
-    if (error) return showToast('error', error.message)
-    loadAll()
-  }
-
   async function handleSendNow(cfg: ReportConfig) {
     setSendingId(cfg.id)
     try {
@@ -405,10 +390,7 @@ export default function RelatoriosPage() {
             Relatórios WhatsApp
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Configure envios automáticos dos indicadores da estaca via WhatsApp.
-          </p>
-          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mt-2 inline-block">
-            ⚠️ No plano atual, o envio acontece 1x/dia às 08:00 (America/Sao_Paulo). O horário configurado é informativo.
+            Gerencie relatórios e envie manualmente via WhatsApp ou baixe em PDF.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -439,7 +421,7 @@ export default function RelatoriosPage() {
         <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-10 text-center">
           <Bell className="w-12 h-12 text-sky-300 mx-auto mb-3" />
           <h3 className="text-lg font-semibold text-gray-800">Nenhum relatório configurado ainda</h3>
-          <p className="text-sm text-gray-500 mt-1">Crie um envio automático ou gere um PDF na hora.</p>
+          <p className="text-sm text-gray-500 mt-1">Configure um relatório ou gere um PDF na hora.</p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
             <button
               onClick={openPdfManual}
@@ -467,7 +449,6 @@ export default function RelatoriosPage() {
               generatingPdf={pdfId === cfg.id}
               onEdit={() => openEdit(cfg)}
               onDelete={() => handleDelete(cfg)}
-              onToggle={() => handleToggleActive(cfg)}
               onSend={() => handleSendNow(cfg)}
               onDownloadPdf={() => handleDownloadPdf(cfg)}
             />
@@ -557,7 +538,7 @@ export default function RelatoriosPage() {
 
 function ReportCard({
   cfg, indicators, wards, sending, generatingPdf,
-  onEdit, onDelete, onToggle, onSend, onDownloadPdf,
+  onEdit, onDelete, onSend, onDownloadPdf,
 }: {
   cfg: ReportConfig
   indicators: Indicator[]
@@ -566,7 +547,6 @@ function ReportCard({
   generatingPdf: boolean
   onEdit: () => void
   onDelete: () => void
-  onToggle: () => void
   onSend: () => void
   onDownloadPdf: () => void
 }) {
@@ -583,26 +563,15 @@ function ReportCard({
           .join(', ')
 
   return (
-    <div className={`bg-white rounded-3xl border shadow-sm p-5 flex flex-col ${
-      cfg.is_active ? 'border-gray-100' : 'border-gray-200 opacity-75'
-    }`}>
-      <div className="flex items-start justify-between gap-3">
+    <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-5 flex flex-col">
+      <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
           <h3 className="font-bold text-gray-900 truncate">{cfg.name}</h3>
           <p className="text-xs text-gray-500 mt-0.5 font-mono">{cfg.recipient_whatsapp}</p>
         </div>
-        <span className={`px-2 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${
-          cfg.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'
-        }`}>
-          {cfg.is_active ? 'Ativo' : 'Pausado'}
-        </span>
       </div>
 
       <div className="mt-4 space-y-2 text-sm">
-        <div className="flex items-center gap-2 text-gray-600">
-          <Calendar size={14} className="text-sky-600 flex-shrink-0" />
-          <span className="truncate">{describeSchedule(cfg)}</span>
-        </div>
         <div className="flex items-center gap-2 text-gray-600">
           <Clock size={14} className="text-sky-600 flex-shrink-0" />
           <span>{PERIOD_LABELS[cfg.period]}</span>
@@ -677,13 +646,6 @@ function ReportCard({
         >
           {generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown size={14} />}
           PDF
-        </button>
-        <button
-          onClick={onToggle}
-          className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
-          title={cfg.is_active ? 'Pausar' : 'Ativar'}
-        >
-          {cfg.is_active ? <PowerOff size={16} /> : <Power size={16} />}
         </button>
         <button
           onClick={onEdit}
@@ -806,57 +768,6 @@ function ReportModal({
               </Field>
             )}
           </div>
-
-          {/* Frequência + horário + dia (só no modo agendado) */}
-          {!pdfMode && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Field label="Frequência">
-              <select
-                value={form.frequency}
-                onChange={e => setForm({ ...form, frequency: e.target.value as Frequency })}
-                className="input"
-              >
-                <option value="daily">Diário</option>
-                <option value="weekly">Semanal</option>
-                <option value="monthly">Mensal</option>
-              </select>
-            </Field>
-            <Field label="Horário">
-              <input
-                type="time"
-                value={form.send_time}
-                onChange={e => setForm({ ...form, send_time: e.target.value })}
-                className="input"
-              />
-            </Field>
-            {form.frequency === 'weekly' && (
-              <Field label="Dia da semana">
-                <select
-                  value={form.send_day}
-                  onChange={e => setForm({ ...form, send_day: Number(e.target.value) })}
-                  className="input"
-                >
-                  {WEEKDAYS.map((w, i) => (
-                    <option key={i} value={i}>{w}</option>
-                  ))}
-                </select>
-              </Field>
-            )}
-            {form.frequency === 'monthly' && (
-              <Field label="Dia do mês">
-                <input
-                  type="number"
-                  min={1}
-                  max={31}
-                  value={form.send_day}
-                  onChange={e => setForm({ ...form, send_day: Number(e.target.value) })}
-                  className="input"
-                />
-              </Field>
-            )}
-            {form.frequency === 'daily' && <div />}
-          </div>
-          )}
 
           {/* Período */}
           <Field label="Período dos dados">
@@ -1056,17 +967,6 @@ function ReportModal({
                   Incluir ranking por ala
                 </label>
               </>
-            )}
-            {!pdfMode && (
-              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={form.is_active}
-                  onChange={e => setForm({ ...form, is_active: e.target.checked })}
-                  className="accent-sky-600 w-4 h-4"
-                />
-                Ativo (envio automático)
-              </label>
             )}
           </div>
         </div>
