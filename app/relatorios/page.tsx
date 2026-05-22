@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '../../lib/supabase/client'
 import {
-  Bell, Plus, Pencil, Trash2, Send,
-  X, Loader2, CheckCircle2, AlertCircle, Clock, MessageSquare, FileDown,
+  Bell, Plus, Pencil, Trash2,
+  X, Loader2, CheckCircle2, AlertCircle, Clock, FileText, FileDown,
 } from 'lucide-react'
 import { buildReportPdf, safeFileName } from '../../lib/relatorios/build-pdf'
 import type { ReportConfig as PdfReportConfig } from '../../lib/relatorios/build-message'
@@ -138,7 +138,6 @@ export default function RelatoriosPage() {
   const [pdfManualForm, setPdfManualForm] = useState<FormState>(DEFAULT_FORM)
   const [pdfManualBuilding, setPdfManualBuilding] = useState(false)
 
-  const [sendingId, setSendingId] = useState<string | null>(null)
   const [pdfId, setPdfId] = useState<string | null>(null)
   const [toast, setToast] = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
   const [docHistory, setDocHistory] = useState<{ id: string; name: string; report_type: string; ward_name: string | null; created_at: string }[]>([])
@@ -215,7 +214,6 @@ export default function RelatoriosPage() {
 
   async function handleSave() {
     if (!form.name.trim()) return showToast('error', 'Dê um nome ao relatório.')
-    if (!form.recipient_whatsapp.trim()) return showToast('error', 'Informe o número do WhatsApp.')
     if (form.report_type === 'summary' && form.indicators.length === 0) {
       return showToast('error', 'Selecione ao menos um indicador.')
     }
@@ -225,7 +223,6 @@ export default function RelatoriosPage() {
     const isSumo = form.report_type === 'sumo_briefing'
     const payload = {
       name: form.name.trim(),
-      recipient_whatsapp: form.recipient_whatsapp.replace(/\D/g, ''),
       frequency: form.frequency,
       send_time: form.send_time,
       send_day: form.frequency === 'daily' ? null : form.send_day,
@@ -260,25 +257,6 @@ export default function RelatoriosPage() {
     if (error) return showToast('error', error.message)
     showToast('ok', 'Relatório excluído.')
     loadAll()
-  }
-
-  async function handleSendNow(cfg: ReportConfig) {
-    setSendingId(cfg.id)
-    try {
-      const res = await fetch('/api/relatorios/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reportId: cfg.id }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) showToast('error', data.error || `Falha (${res.status})`)
-      else showToast('ok', 'Relatório enviado!')
-      loadAll()
-    } catch (err) {
-      showToast('error', err instanceof Error ? err.message : 'Erro desconhecido')
-    } finally {
-      setSendingId(null)
-    }
   }
 
   async function handleDownloadPdf(cfg: ReportConfig) {
@@ -386,11 +364,11 @@ export default function RelatoriosPage() {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold text-[#0e4f66] flex items-center gap-2">
-            <MessageSquare className="w-7 h-7 text-sky-600" />
-            Relatórios WhatsApp
+            <FileText className="w-7 h-7 text-sky-600" />
+            Relatórios
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Gerencie relatórios e envie manualmente via WhatsApp ou baixe em PDF.
+            Gerencie modelos de relatório e gere PDFs quando precisar.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -445,11 +423,9 @@ export default function RelatoriosPage() {
               cfg={cfg}
               indicators={indicators}
               wards={wards}
-              sending={sendingId === cfg.id}
               generatingPdf={pdfId === cfg.id}
               onEdit={() => openEdit(cfg)}
               onDelete={() => handleDelete(cfg)}
-              onSend={() => handleSendNow(cfg)}
               onDownloadPdf={() => handleDownloadPdf(cfg)}
             />
           ))}
@@ -537,17 +513,15 @@ export default function RelatoriosPage() {
 // ═══════════════════════════════════════
 
 function ReportCard({
-  cfg, indicators, wards, sending, generatingPdf,
-  onEdit, onDelete, onSend, onDownloadPdf,
+  cfg, indicators, wards, generatingPdf,
+  onEdit, onDelete, onDownloadPdf,
 }: {
   cfg: ReportConfig
   indicators: Indicator[]
   wards: Ward[]
-  sending: boolean
   generatingPdf: boolean
   onEdit: () => void
   onDelete: () => void
-  onSend: () => void
   onDownloadPdf: () => void
 }) {
   const indicatorNames = cfg.indicators
@@ -567,7 +541,6 @@ function ReportCard({
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
           <h3 className="font-bold text-gray-900 truncate">{cfg.name}</h3>
-          <p className="text-xs text-gray-500 mt-0.5 font-mono">{cfg.recipient_whatsapp}</p>
         </div>
       </div>
 
@@ -619,33 +592,15 @@ function ReportCard({
         )}
       </div>
 
-      <div className="mt-4 pt-4 border-t border-gray-100 text-xs text-gray-500">
-        <span className="text-gray-400">Último envio:</span>{' '}
-        <span className={cfg.last_send_status?.startsWith('error') ? 'text-rose-600 font-medium' : 'text-gray-700'}>
-          {formatDateTime(cfg.last_sent_at)}
-        </span>
-        {cfg.last_send_status?.startsWith('error') && (
-          <p className="text-rose-600 mt-1 text-[11px] truncate">{cfg.last_send_status}</p>
-        )}
-      </div>
-
       <div className="mt-4 flex items-center gap-2">
         <button
-          onClick={onSend}
-          disabled={sending || generatingPdf}
-          className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-sky-600 hover:bg-sky-700 text-white text-sm font-semibold rounded-lg disabled:opacity-60"
-        >
-          {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send size={14} />}
-          {sending ? 'Enviando' : 'Enviar agora'}
-        </button>
-        <button
           onClick={onDownloadPdf}
-          disabled={sending || generatingPdf}
-          className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg disabled:opacity-60"
+          disabled={generatingPdf}
+          className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg disabled:opacity-60"
           title="Gerar e baixar PDF deste relatório"
         >
           {generatingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown size={14} />}
-          PDF
+          {generatingPdf ? 'Gerando...' : 'Gerar PDF'}
         </button>
         <button
           onClick={onEdit}
@@ -745,29 +700,16 @@ function ReportModal({
             </div>
           </Field>
 
-          {/* Nome + Whatsapp */}
-          <div className={`grid grid-cols-1 ${pdfMode ? '' : 'md:grid-cols-2'} gap-4`}>
-            <Field label={pdfMode ? 'Título do PDF' : 'Nome do relatório'}>
-              <input
-                type="text"
-                value={form.name}
-                onChange={e => setForm({ ...form, name: e.target.value })}
-                placeholder={pdfMode ? 'Ex: Relatório de batismos — abril' : 'Ex: Resumo semanal estaca'}
-                className="input"
-              />
-            </Field>
-            {!pdfMode && (
-              <Field label="WhatsApp (com DDI)">
-                <input
-                  type="text"
-                  value={form.recipient_whatsapp}
-                  onChange={e => setForm({ ...form, recipient_whatsapp: e.target.value })}
-                  placeholder="5551999990000"
-                  className="input font-mono"
-                />
-              </Field>
-            )}
-          </div>
+          {/* Nome */}
+          <Field label={pdfMode ? 'Título do PDF' : 'Nome do relatório'}>
+            <input
+              type="text"
+              value={form.name}
+              onChange={e => setForm({ ...form, name: e.target.value })}
+              placeholder={pdfMode ? 'Ex: Relatório de batismos — abril' : 'Ex: Resumo semanal estaca'}
+              className="input"
+            />
+          </Field>
 
           {/* Período */}
           <Field label="Período dos dados">
