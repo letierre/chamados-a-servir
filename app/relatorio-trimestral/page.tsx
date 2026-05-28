@@ -106,9 +106,18 @@ export default function RelatorioTrimestralPage() {
   const handleUpload = async (file: File) => {
     setUploading(true)
     try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) { showToast('error', 'Sessão expirada. Faça login novamente.'); return }
+
       const fd = new FormData()
       fd.append('pdf', file)
-      const res  = await fetch('/api/relatorio-trimestral/extract', { method: 'POST', body: fd })
+
+      const edgeFnUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/extract-quarterly-report`
+      const res = await fetch(edgeFnUrl, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        body: fd,
+      })
       const data = await res.json()
       if (!res.ok) { showToast('error', data.error || 'Erro ao processar PDF.'); return }
       const linked = data.linkedConvertsCount ?? 0
