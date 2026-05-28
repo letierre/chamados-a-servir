@@ -144,17 +144,21 @@ Deno.serve(async (req) => {
     console.log(`PDF carregado: ${(buffer.byteLength / 1024).toFixed(0)} KB, base64: ${base64.length} chars`)
 
     // ── Anthropic REST API (sem SDK) ──
+    // Abort se Anthropic demorar mais de 120s (deixa 30s para salvar no banco)
+    const abortCtrl = new AbortController()
+    const abortTimer = setTimeout(() => abortCtrl.abort(), 120_000)
+
     const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
+      signal: abortCtrl.signal,
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'pdfs-2024-09-25',
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-6',
-        max_tokens: 16000,
+        max_tokens: 9000,
         messages: [{
           role: 'user',
           content: [
@@ -167,6 +171,8 @@ Deno.serve(async (req) => {
         }],
       }),
     })
+
+    clearTimeout(abortTimer)
 
     if (!anthropicRes.ok) {
       const errBody = await anthropicRes.text()
