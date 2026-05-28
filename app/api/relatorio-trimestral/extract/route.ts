@@ -71,7 +71,7 @@ SCHEMA OBRIGATÓRIO:
 
 Extraia TODOS os 26 indicadores e TODOS os conversos de TODAS as unidades.`
 
-// ─── Ward matching ────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function matchWardId(
   wardName: string,
@@ -83,6 +83,32 @@ function matchWardId(
     return wc.includes(clean) || clean.includes(wc)
   })
   return found?.id ?? null
+}
+
+// Normaliza nome para matching: remove acentos, vírgulas, ordena palavras alfabeticamente.
+// PDF: "Silva, Ana Maria" → "ana maria silva"
+// BD:  "Ana Maria Silva"  → "ana maria silva"
+function normalizeName(name: string): string {
+  return name
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/,/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+    .sort()
+    .join(' ')
+}
+
+function quarterDateRange(year: number, quarter: number): { start: string; end: string } {
+  const startMonth = (quarter - 1) * 3 + 1
+  const endMonth = quarter * 3
+  const endDay = [3, 6, 9].includes(endMonth) ? 30 : 31 // mar=31, jun=30, set=30, dez=31
+  return {
+    start: `${year}-${String(startMonth).padStart(2, '0')}-01`,
+    end:   `${year}-${String(endMonth).padStart(2, '0')}-${endDay}`,
+  }
 }
 
 // ─── Handler ─────────────────────────────────────────────────────────────────
@@ -127,7 +153,6 @@ export async function POST(request: Request) {
       .map(b => b.text)
       .join('')
 
-    // Extrair JSON da resposta
     const jsonMatch = rawText.match(/\{[\s\S]*\}/)
     if (!jsonMatch) throw new Error('IA não retornou JSON válido. Tente novamente.')
     const data = JSON.parse(jsonMatch[0])
@@ -136,7 +161,6 @@ export async function POST(request: Request) {
       throw new Error('Dados extraídos incompletos. Verifique se o PDF é um Relatório Trimestral válido.')
     }
 
-    // ── Salvar no banco ──
     const supabase = createAdminClient()
 
     // Buscar alas para matching
@@ -163,7 +187,7 @@ export async function POST(request: Request) {
       .single()
     if (rErr) throw new Error(`Erro ao criar relatório: ${rErr.message}`)
 
-    // Inserir indicadores (linhas por ala + linha __stake__)
+    // ── Inserir indicadores ──
     const indRows: any[] = []
     for (const ind of data.indicators) {
       for (const [wardName, value] of Object.entries(ind.wards ?? {})) {
@@ -193,7 +217,7 @@ export async function POST(request: Request) {
     const { error: indErr } = await supabase.from('quarterly_report_indicators').insert(indRows)
     if (indErr) throw new Error(`Erro ao salvar indicadores: ${indErr.message}`)
 
-    // Inserir conversos
+    // ── Inserir conversos ──
     const convertRows: any[] = []
     for (const ward of data.converts ?? []) {
       const wardId = matchWardId(ward.ward_name, wards ?? [])
@@ -208,13 +232,62 @@ export async function POST(request: Request) {
           priesthood: m.priesthood ?? null,
           attended_sacrament: m.attended_sacrament ?? null,
           has_calling: m.has_calling ?? null,
+          baptism_record_id: null, // preenchido no passo seguinte
         })
       }
     }
+
     if (convertRows.length > 0) {
       const { error: cErr } = await supabase.from('quarterly_report_converts').insert(convertRows)
       if (cErr) throw new Error(`Erro ao salvar conversos: ${cErr.message}`)
+
+      // ── Cruzar com baptism_records ──
+      const { start, end } = quarterDateRange(data.year, data.quarter)
+
+      const { data: baptisms } = await supabase
+        .from('baptism_records')
+        .select('id, person_name')
+        .gte('baptism_date', start)
+        .lte('baptism_date', end)
+
+      if (baptisms && baptisms.length > 0) {
+        // Mapa: nome normalizado → id do registro
+        const baptismMap = new Map<string, string>(
+          baptisms.map(b => [normalizeName(b.person_name), b.id])
+        )
+
+        // Buscar os conversos recém-inseridos para ter seus IDs
+        const { data: savedConverts } = await supabase
+          .from('quarterly_report_converts')
+          .select('id, name')
+          .eq('report_id', report.id)
+
+        if (savedConverts) {
+          const updates = savedConverts
+            .map(c => ({ id: c.id, baptism_record_id: baptismMap.get(normalizeName(c.name)) ?? null }))
+            .filter(u => u.baptism_record_id !== null)
+
+          // Atualizar em lote (um por um, Supabase não tem bulk update por PK diferente)
+          await Promise.all(
+            updates.map(u =>
+              supabase
+                .from('quarterly_report_converts')
+                .update({ baptism_record_id: u.baptism_record_id })
+                .eq('id', u.id)
+            )
+          )
+        }
+      }
     }
+
+    const linkedCount = convertRows.length > 0
+      ? (await supabase
+          .from('quarterly_report_converts')
+          .select('id', { count: 'exact', head: true })
+          .eq('report_id', report.id)
+          .not('baptism_record_id', 'is', null)
+        ).count ?? 0
+      : 0
 
     return NextResponse.json({
       reportId: report.id,
@@ -222,6 +295,7 @@ export async function POST(request: Request) {
       quarter: data.quarter,
       indicatorsCount: indRows.filter(r => r.ward_name !== '__stake__').length,
       convertsCount: convertRows.length,
+      linkedConvertsCount: linkedCount,
     })
   } catch (error: any) {
     console.error('Erro extração relatório trimestral:', error)

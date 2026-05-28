@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS quarterly_report_indicators (
   UNIQUE(report_id, ward_name, indicator_number)
 );
 
--- 3. Conversos nominais
+-- 3. Conversos nominais com link opcional para baptism_records
 CREATE TABLE IF NOT EXISTS quarterly_report_converts (
   id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   report_id           uuid NOT NULL REFERENCES quarterly_reports(id) ON DELETE CASCADE,
@@ -42,8 +42,12 @@ CREATE TABLE IF NOT EXISTS quarterly_report_converts (
   priesthood          text,
   attended_sacrament  boolean,
   has_calling         boolean,
+  baptism_record_id   uuid REFERENCES baptism_records(id),  -- preenchido automaticamente quando nome bate
   updated_at          timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS idx_qrc_baptism_record
+  ON quarterly_report_converts(baptism_record_id);
 
 -- RLS
 ALTER TABLE quarterly_reports           ENABLE ROW LEVEL SECURITY;

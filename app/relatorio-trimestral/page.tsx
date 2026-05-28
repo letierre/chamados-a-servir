@@ -23,6 +23,7 @@ type Convert = {
   id: string; ward_name: string; name: string
   gender: 'M' | 'F' | null; age: number | null; priesthood: string | null
   attended_sacrament: boolean | null; has_calling: boolean | null
+  baptism_record_id: string | null
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -110,7 +111,12 @@ export default function RelatorioTrimestralPage() {
       const res  = await fetch('/api/relatorio-trimestral/extract', { method: 'POST', body: fd })
       const data = await res.json()
       if (!res.ok) { showToast('error', data.error || 'Erro ao processar PDF.'); return }
-      showToast('ok', `T${data.quarter} ${data.year} extraído — ${data.convertsCount} conversos, ${data.indicatorsCount} valores.`)
+      const linked = data.linkedConvertsCount ?? 0
+      const unlinked = (data.convertsCount ?? 0) - linked
+      const linkMsg = linked > 0
+        ? `${linked} vinculados ao BD${unlinked > 0 ? `, ${unlinked} apenas no PDF` : ''}`
+        : `${data.convertsCount} conversos (nenhum vinculado ao BD)`
+      showToast('ok', `T${data.quarter} ${data.year} extraído — ${data.indicatorsCount} valores. ${linkMsg}.`)
       await loadReports()
     } catch (err) {
       showToast('error', err instanceof Error ? err.message : 'Erro desconhecido')
@@ -433,6 +439,25 @@ export default function RelatorioTrimestralPage() {
                 })}
               </div>
 
+              {/* Link summary for this ward */}
+              {wardConverts.length > 0 && (() => {
+                const linked   = wardConverts.filter(c => c.baptism_record_id).length
+                const unlinked = wardConverts.length - linked
+                return (
+                  <div className="flex items-center gap-3 text-xs">
+                    <span className="flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2 py-1 rounded-lg font-semibold">
+                      <Check size={12} /> {linked} vinculado{linked !== 1 ? 's' : ''} ao BD
+                    </span>
+                    {unlinked > 0 && (
+                      <span className="flex items-center gap-1 text-amber-700 bg-amber-50 px-2 py-1 rounded-lg font-semibold"
+                        title="Converso presente no PDF mas sem correspondência nos lançamentos semanais">
+                        <AlertCircle size={12} /> {unlinked} só no PDF
+                      </span>
+                    )}
+                  </div>
+                )
+              })()}
+
               {/* Convert list */}
               {wardConverts.length === 0 ? (
                 <p className="text-sm text-gray-400 py-8 text-center">Nenhum converso para esta unidade.</p>
@@ -447,11 +472,12 @@ export default function RelatorioTrimestralPage() {
                         <th className="text-left px-3 py-2 font-semibold">Sacerdócio</th>
                         <th className="text-center px-2 py-2 font-semibold">Freq. Sacr.</th>
                         <th className="text-center px-2 py-2 font-semibold">Chamado</th>
+                        <th className="text-center px-2 py-2 font-semibold">BD</th>
                       </tr>
                     </thead>
                     <tbody>
                       {wardConverts.map(c => (
-                        <tr key={c.id} className="border-t border-gray-50 hover:bg-gray-50/50">
+                        <tr key={c.id} className={`border-t border-gray-50 hover:bg-gray-50/50 ${!c.baptism_record_id ? 'bg-amber-50/30' : ''}`}>
                           <td className="px-4 py-2.5 font-medium text-gray-800">{c.name}</td>
                           <td className="text-center px-2 py-2.5">
                             <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${
@@ -473,6 +499,11 @@ export default function RelatorioTrimestralPage() {
                               : c.has_calling
                               ? <Check size={14} className="text-emerald-500 mx-auto" />
                               : <X    size={14} className="text-rose-400   mx-auto" />}
+                          </td>
+                          <td className="text-center px-2 py-2.5">
+                            {c.baptism_record_id
+                              ? <span title="Vinculado ao banco de dados"><Check size={14} className="text-emerald-500 mx-auto" /></span>
+                              : <span className="text-amber-400 font-bold text-xs" title="Não encontrado nos lançamentos semanais">!</span>}
                           </td>
                         </tr>
                       ))}
