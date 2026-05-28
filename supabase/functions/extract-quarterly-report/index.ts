@@ -1,5 +1,4 @@
-import Anthropic from 'npm:@anthropic-ai/sdk'
-import { createClient } from 'npm:@supabase/supabase-js'
+import { createClient } from 'npm:@supabase/supabase-js@2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -123,45 +122,80 @@ Deno.serve(async (req) => {
     return new Response('ok', { headers: corsHeaders })
   }
 
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    })
+
   try {
     const apiKey = Deno.env.get('ANTHROPIC_API_KEY')
-    if (!apiKey) throw new Error('ANTHROPIC_API_KEY não configurada.')
+    if (!apiKey) return json({ error: 'ANTHROPIC_API_KEY não configurada.' }, 500)
 
     const formData = await req.formData()
     const file = formData.get('pdf') as File | null
-    if (!file) throw new Error('Nenhum arquivo enviado.')
-    if (!file.name.toLowerCase().endsWith('.pdf')) throw new Error('O arquivo deve ser um PDF.')
+    if (!file) return json({ error: 'Nenhum arquivo enviado.' }, 400)
+    if (!file.name.toLowerCase().endsWith('.pdf')) return json({ error: 'O arquivo deve ser um PDF.' }, 400)
 
     const buffer = await file.arrayBuffer()
-    if (buffer.byteLength > 20_000_000) throw new Error('PDF muito grande (máximo 20 MB).')
+    if (buffer.byteLength > 20_000_000) return json({ error: 'PDF muito grande (máximo 20 MB).' }, 400)
 
     const base64 = toBase64(buffer)
+    console.log(`PDF carregado: ${(buffer.byteLength / 1024).toFixed(0)} KB, base64: ${base64.length} chars`)
 
-    // ── Claude ──
-    const anthropic = new Anthropic({ apiKey })
-    const msg = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 8000,
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } } as any,
-          { type: 'text', text: EXTRACTION_PROMPT },
-        ],
-      }],
+    // ── Anthropic REST API (sem SDK) ──
+    const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'pdfs-2024-09-25',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 16000,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'document',
+              source: { type: 'base64', media_type: 'application/pdf', data: base64 },
+            },
+            { type: 'text', text: EXTRACTION_PROMPT },
+          ],
+        }],
+      }),
     })
 
-    const rawText = (msg.content as any[])
-      .filter(b => b.type === 'text')
-      .map(b => b.text)
+    if (!anthropicRes.ok) {
+      const errBody = await anthropicRes.text()
+      console.error('Anthropic error:', anthropicRes.status, errBody)
+      return json({ error: `Erro na API Anthropic: ${anthropicRes.status}` }, 500)
+    }
+
+    const anthropicData = await anthropicRes.json()
+    const rawText = (anthropicData.content as any[])
+      .filter((b: any) => b.type === 'text')
+      .map((b: any) => b.text)
       .join('')
 
+    console.log(`Resposta IA: ${rawText.length} chars`)
+
     const jsonMatch = rawText.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) throw new Error('IA não retornou JSON válido. Tente novamente.')
-    const data = JSON.parse(jsonMatch[0])
+    if (!jsonMatch) return json({ error: 'IA não retornou JSON válido. Tente novamente.' }, 500)
+
+    let data: any
+    try {
+      data = JSON.parse(jsonMatch[0])
+    } catch (parseErr: any) {
+      console.error('JSON parse error:', parseErr.message)
+      console.error('JSON preview (last 200 chars):', jsonMatch[0].slice(-200))
+      return json({ error: 'Resposta da IA com JSON inválido. O PDF pode ser muito extenso.' }, 500)
+    }
 
     if (!data.year || !data.quarter || !Array.isArray(data.indicators)) {
-      throw new Error('Dados extraídos incompletos. Verifique se o PDF é um Relatório Trimestral válido.')
+      return json({ error: 'Dados extraídos incompletos. Verifique se o PDF é um Relatório Trimestral válido.' }, 500)
     }
 
     // ── Supabase ──
@@ -185,7 +219,7 @@ Deno.serve(async (req) => {
       })
       .select()
       .single()
-    if (rErr) throw new Error(`Erro ao criar relatório: ${rErr.message}`)
+    if (rErr) return json({ error: `Erro ao criar relatório: ${rErr.message}` }, 500)
 
     // ── Indicadores ──
     const indRows: any[] = []
@@ -214,7 +248,7 @@ Deno.serve(async (req) => {
       })
     }
     const { error: indErr } = await supabase.from('quarterly_report_indicators').insert(indRows)
-    if (indErr) throw new Error(`Erro ao salvar indicadores: ${indErr.message}`)
+    if (indErr) return json({ error: `Erro ao salvar indicadores: ${indErr.message}` }, 500)
 
     // ── Conversos ──
     const convertRows: any[] = []
@@ -239,9 +273,8 @@ Deno.serve(async (req) => {
     let linkedCount = 0
     if (convertRows.length > 0) {
       const { error: cErr } = await supabase.from('quarterly_report_converts').insert(convertRows)
-      if (cErr) throw new Error(`Erro ao salvar conversos: ${cErr.message}`)
+      if (cErr) return json({ error: `Erro ao salvar conversos: ${cErr.message}` }, 500)
 
-      // Cruzar com baptism_records
       const { start, end } = quarterDateRange(data.year, data.quarter)
       const { data: baptisms } = await supabase
         .from('baptism_records')
@@ -251,7 +284,7 @@ Deno.serve(async (req) => {
 
       if (baptisms && baptisms.length > 0) {
         const baptismMap = new Map<string, string>(
-          baptisms.map((b: any) => [normalizeName(b.person_name), b.id])
+          (baptisms as any[]).map(b => [normalizeName(b.person_name), b.id])
         )
         const { data: savedConverts } = await supabase
           .from('quarterly_report_converts')
@@ -275,20 +308,19 @@ Deno.serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({
+    console.log(`Concluído: ${indRows.filter(r => r.ward_name !== '__stake__').length} indicadores, ${convertRows.length} conversos, ${linkedCount} vinculados`)
+
+    return json({
       reportId: report.id,
       year: data.year,
       quarter: data.quarter,
       indicatorsCount: indRows.filter(r => r.ward_name !== '__stake__').length,
       convertsCount: convertRows.length,
       linkedConvertsCount: linkedCount,
-    }), { headers: { 'Content-Type': 'application/json', ...corsHeaders } })
+    })
 
   } catch (err: any) {
-    console.error('Erro extração relatório trimestral:', err)
-    return new Response(
-      JSON.stringify({ error: err?.message || 'Erro ao processar PDF.' }),
-      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
-    )
+    console.error('Erro inesperado:', err?.message ?? err)
+    return json({ error: err?.message || 'Erro ao processar PDF.' }, 500)
   }
 })
