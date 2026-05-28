@@ -1236,6 +1236,7 @@ export default function LancamentosPage() {
                           {isRecomendacao ? 'COM Investidura' : 'Valor Realizado'}
                         </label>
                         <input type="number" value={value} onChange={e => { setValue(e.target.value); setFormError(null) }} required min={0} max={10000}
+                          onWheel={e => e.currentTarget.blur()}
                           className="w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3.5 text-xl md:text-2xl font-black text-[#0069a8] outline-none focus:border-[#0069a8] focus:bg-white transition-all placeholder:text-slate-300"
                           placeholder="0" />
                       </div>
@@ -1427,6 +1428,7 @@ export default function LancamentosPage() {
                     </label>
                     <p className="text-[10px] text-amber-600 -mt-1">Mesmo link do site da Igreja, campo separado aqui.</p>
                     <input type="number" value={valueRecomSem} onChange={e => { setValueRecomSem(e.target.value); setFormError(null) }} min={0} max={10000}
+                      onWheel={e => e.currentTarget.blur()}
                       className="w-full rounded-xl border-2 border-amber-200 bg-white px-4 py-3.5 text-xl md:text-2xl font-black text-amber-700 outline-none focus:border-amber-400 transition-all placeholder:text-amber-300"
                       placeholder="0" />
                   </div>
@@ -1463,6 +1465,7 @@ export default function LancamentosPage() {
                         Novo total de membros (para o domingo {weekStart ? new Date(weekStart + 'T12:00:00').toLocaleDateString('pt-BR') : 'selecionado'})
                       </p>
                       <input type="number" value={membershipCount} onChange={e => setMembershipCount(e.target.value)} min={1} max={10000}
+                        onWheel={e => e.currentTarget.blur()}
                         className="w-full rounded-xl border-2 border-violet-200 bg-white px-4 py-3.5 text-xl md:text-2xl font-black text-violet-700 outline-none focus:border-violet-400 transition-all placeholder:text-violet-300"
                         placeholder={latestMembership ? String(latestMembership.count) : '0'} />
                       <p className="text-[10px] text-violet-500 mt-1.5">
