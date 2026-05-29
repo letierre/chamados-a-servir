@@ -6,70 +6,37 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-// ─── Prompt ──────────────────────────────────────────────────────────────────
+// ─── Prompts ──────────────────────────────────────────────────────────────────
 
-const EXTRACTION_PROMPT = `Extraia todos os dados deste Relatório Trimestral da Igreja de Jesus Cristo dos Santos dos Últimos Dias.
+const INDICATORS_PROMPT = `Extraia os dados de indicadores deste Relatório Trimestral da Igreja de Jesus Cristo dos Santos dos Últimos Dias.
 
-Retorne SOMENTE um objeto JSON válido, MINIFICADO (sem espaços, sem quebras de linha, sem indentação). Nenhum texto antes ou depois. Nenhum markdown.
+Retorne SOMENTE um objeto JSON MINIFICADO (sem espaços, sem quebras de linha). Nenhum texto antes ou depois.
 
-MAPEAMENTO DE COLUNAS (abreviações da tabela → nomes completos):
-Cach = Cachoeira do Sul
-Camp = Santa Cruz do Sul Campus
-Estr = Estrela
-Laj  = Lajeado
-Mar  = Marina
-RioP = Rio Pardo
-SCS  = Santa Cruz do Sul
-VAir = Venâncio Aires
+MAPEAMENTO DE COLUNAS:
+Cach=Cachoeira do Sul, Camp=Santa Cruz do Sul Campus, Estr=Estrela, Laj=Lajeado, Mar=Marina, RioP=Rio Pardo, SCS=Santa Cruz do Sul, VAir=Venâncio Aires
 
 REGRAS:
-- Números: inteiros sem formatação de milhar (ex: 1581, não 1,581)
+- Números: inteiros sem formatação de milhar
 - Células "---" ou em branco: null
+
+SCHEMA:
+{"stake_name":"nome da estaca","stake_id":"código numérico","year":2026,"quarter":1,"indicators":[{"number":1,"name":"nome completo do indicador","wards":{"Cachoeira do Sul":45,"Santa Cruz do Sul Campus":67,"Estrela":43,"Lajeado":111,"Marina":64,"Rio Pardo":35,"Santa Cruz do Sul":46,"Venâncio Aires":57},"stake_real":468,"stake_potential":854}]}
+
+Extraia TODOS os 26 indicadores.`
+
+const CONVERTS_PROMPT = `Extraia a lista de conversos (membros batizados recentemente) deste Relatório Trimestral da Igreja de Jesus Cristo dos Santos dos Últimos Dias.
+
+Retorne SOMENTE um objeto JSON MINIFICADO (sem espaços, sem quebras de linha). Nenhum texto antes ou depois.
+
+REGRAS:
 - "Sim" → true | "Não" → false | "---" → null
 - Sacerdócio "---": null
+- Gênero: "M" ou "F"
 
-SCHEMA OBRIGATÓRIO:
-{
-  "stake_name": "nome completo da estaca",
-  "stake_id": "código numérico no cabeçalho entre parênteses",
-  "year": 2026,
-  "quarter": 1,
-  "indicators": [
-    {
-      "number": 1,
-      "name": "nome completo do indicador conforme aparece no documento",
-      "wards": {
-        "Cachoeira do Sul": 45,
-        "Santa Cruz do Sul Campus": 67,
-        "Estrela": 43,
-        "Lajeado": 111,
-        "Marina": 64,
-        "Rio Pardo": 35,
-        "Santa Cruz do Sul": 46,
-        "Venâncio Aires": 57
-      },
-      "stake_real": 468,
-      "stake_potential": 854
-    }
-  ],
-  "converts": [
-    {
-      "ward_name": "Cachoeira do Sul Ward",
-      "members": [
-        {
-          "name": "Sobrenome, Nome",
-          "gender": "M",
-          "age": 43,
-          "priesthood": "Não Ordenado",
-          "attended_sacrament": false,
-          "has_calling": false
-        }
-      ]
-    }
-  ]
-}
+SCHEMA:
+{"converts":[{"ward_name":"Cachoeira do Sul Ward","members":[{"name":"Sobrenome, Nome","gender":"M","age":43,"priesthood":"Não Ordenado","attended_sacrament":false,"has_calling":false}]}]}
 
-Extraia TODOS os 26 indicadores e TODOS os conversos de TODAS as unidades.`
+Extraia TODOS os conversos de TODAS as unidades.`
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -115,12 +82,53 @@ function toBase64(buffer: ArrayBuffer): string {
   return btoa(binary)
 }
 
+function extractJson(text: string): any {
+  const match = text.match(/\{[\s\S]*\}/)
+  if (!match) throw new Error('IA não retornou JSON válido.')
+  return JSON.parse(match[0])
+}
+
+async function callClaude(apiKey: string, base64: string, prompt: string, label: string): Promise<any> {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 8000,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+          { type: 'text', text: prompt },
+        ],
+      }],
+    }),
+  })
+
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`Anthropic error (${label}): ${res.status} ${body}`)
+  }
+
+  const data = await res.json()
+  const text = (data.content as any[]).filter(b => b.type === 'text').map(b => b.text).join('')
+  console.log(`${label}: ${text.length} chars, stop_reason: ${data.stop_reason}`)
+
+  if (data.stop_reason === 'max_tokens') {
+    throw new Error(`Resposta da IA truncada na chamada de ${label}. O relatório pode ter dados além do esperado.`)
+  }
+
+  return extractJson(text)
+}
+
 // ─── Handler ─────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
@@ -141,67 +149,16 @@ Deno.serve(async (req) => {
     if (buffer.byteLength > 20_000_000) return json({ error: 'PDF muito grande (máximo 20 MB).' }, 400)
 
     const base64 = toBase64(buffer)
-    console.log(`PDF carregado: ${(buffer.byteLength / 1024).toFixed(0)} KB, base64: ${base64.length} chars`)
+    console.log(`PDF: ${(buffer.byteLength / 1024).toFixed(0)} KB`)
 
-    // ── Anthropic REST API (sem SDK) ──
-    // Abort se Anthropic demorar mais de 120s (deixa 30s para salvar no banco)
-    const abortCtrl = new AbortController()
-    const abortTimer = setTimeout(() => abortCtrl.abort(), 120_000)
+    // ── Duas chamadas paralelas ao Sonnet ──
+    const [indicatorsData, convertsData] = await Promise.all([
+      callClaude(apiKey, base64, INDICATORS_PROMPT, 'indicadores'),
+      callClaude(apiKey, base64, CONVERTS_PROMPT,   'conversos'),
+    ])
 
-    const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      signal: abortCtrl.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 16000,
-        messages: [{
-          role: 'user',
-          content: [
-            {
-              type: 'document',
-              source: { type: 'base64', media_type: 'application/pdf', data: base64 },
-            },
-            { type: 'text', text: EXTRACTION_PROMPT },
-          ],
-        }],
-      }),
-    })
-
-    clearTimeout(abortTimer)
-
-    if (!anthropicRes.ok) {
-      const errBody = await anthropicRes.text()
-      console.error('Anthropic error:', anthropicRes.status, errBody)
-      return json({ error: `Erro na API Anthropic: ${anthropicRes.status}` }, 500)
-    }
-
-    const anthropicData = await anthropicRes.json()
-    const rawText = (anthropicData.content as any[])
-      .filter((b: any) => b.type === 'text')
-      .map((b: any) => b.text)
-      .join('')
-
-    console.log(`Resposta IA: ${rawText.length} chars`)
-
-    const jsonMatch = rawText.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) return json({ error: 'IA não retornou JSON válido. Tente novamente.' }, 500)
-
-    let data: any
-    try {
-      data = JSON.parse(jsonMatch[0])
-    } catch (parseErr: any) {
-      console.error('JSON parse error:', parseErr.message)
-      console.error('JSON preview (last 200 chars):', jsonMatch[0].slice(-200))
-      return json({ error: 'Resposta da IA com JSON inválido. O PDF pode ser muito extenso.' }, 500)
-    }
-
-    if (!data.year || !data.quarter || !Array.isArray(data.indicators)) {
-      return json({ error: 'Dados extraídos incompletos. Verifique se o PDF é um Relatório Trimestral válido.' }, 500)
+    if (!indicatorsData.year || !indicatorsData.quarter || !Array.isArray(indicatorsData.indicators)) {
+      return json({ error: 'Dados de indicadores incompletos. Verifique se o PDF é um Relatório Trimestral válido.' }, 500)
     }
 
     // ── Supabase ──
@@ -212,15 +169,19 @@ Deno.serve(async (req) => {
 
     const { data: wards } = await supabase.from('wards').select('id, name').eq('active', true)
 
-    await supabase.from('quarterly_reports').delete().eq('year', data.year).eq('quarter', data.quarter)
+    await supabase
+      .from('quarterly_reports')
+      .delete()
+      .eq('year', indicatorsData.year)
+      .eq('quarter', indicatorsData.quarter)
 
     const { data: report, error: rErr } = await supabase
       .from('quarterly_reports')
       .insert({
-        year: data.year,
-        quarter: data.quarter,
-        stake_name: data.stake_name ?? '',
-        stake_id: String(data.stake_id ?? ''),
+        year: indicatorsData.year,
+        quarter: indicatorsData.quarter,
+        stake_name: indicatorsData.stake_name ?? '',
+        stake_id: String(indicatorsData.stake_id ?? ''),
         status: 'extracted',
       })
       .select()
@@ -229,7 +190,7 @@ Deno.serve(async (req) => {
 
     // ── Indicadores ──
     const indRows: any[] = []
-    for (const ind of data.indicators) {
+    for (const ind of indicatorsData.indicators) {
       for (const [wardName, value] of Object.entries(ind.wards ?? {})) {
         indRows.push({
           report_id: report.id,
@@ -258,7 +219,7 @@ Deno.serve(async (req) => {
 
     // ── Conversos ──
     const convertRows: any[] = []
-    for (const ward of data.converts ?? []) {
+    for (const ward of convertsData.converts ?? []) {
       const wardId = matchWardId(ward.ward_name, wards ?? [])
       for (const m of ward.members ?? []) {
         convertRows.push({
@@ -281,27 +242,26 @@ Deno.serve(async (req) => {
       const { error: cErr } = await supabase.from('quarterly_report_converts').insert(convertRows)
       if (cErr) return json({ error: `Erro ao salvar conversos: ${cErr.message}` }, 500)
 
-      const { start, end } = quarterDateRange(data.year, data.quarter)
+      const { start, end } = quarterDateRange(indicatorsData.year, indicatorsData.quarter)
       const { data: baptisms } = await supabase
         .from('baptism_records')
         .select('id, person_name')
         .gte('baptism_date', start)
         .lte('baptism_date', end)
 
-      if (baptisms && baptisms.length > 0) {
+      if (baptisms?.length) {
         const baptismMap = new Map<string, string>(
           (baptisms as any[]).map(b => [normalizeName(b.person_name), b.id])
         )
-        const { data: savedConverts } = await supabase
+        const { data: saved } = await supabase
           .from('quarterly_report_converts')
           .select('id, name')
           .eq('report_id', report.id)
 
-        if (savedConverts) {
-          const updates = (savedConverts as any[])
+        if (saved) {
+          const updates = (saved as any[])
             .map(c => ({ id: c.id, baptism_record_id: baptismMap.get(normalizeName(c.name)) ?? null }))
             .filter(u => u.baptism_record_id !== null)
-
           linkedCount = updates.length
           await Promise.all(
             updates.map(u =>
@@ -314,19 +274,19 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`Concluído: ${indRows.filter(r => r.ward_name !== '__stake__').length} indicadores, ${convertRows.length} conversos, ${linkedCount} vinculados`)
+    console.log(`OK: ${indRows.filter(r => r.ward_name !== '__stake__').length} indicadores, ${convertRows.length} conversos, ${linkedCount} vinculados`)
 
     return json({
       reportId: report.id,
-      year: data.year,
-      quarter: data.quarter,
+      year: indicatorsData.year,
+      quarter: indicatorsData.quarter,
       indicatorsCount: indRows.filter(r => r.ward_name !== '__stake__').length,
       convertsCount: convertRows.length,
       linkedConvertsCount: linkedCount,
     })
 
   } catch (err: any) {
-    console.error('Erro inesperado:', err?.message ?? err)
+    console.error('Erro:', err?.message ?? err)
     return json({ error: err?.message || 'Erro ao processar PDF.' }, 500)
   }
 })
