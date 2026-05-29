@@ -28,6 +28,17 @@ type Convert = {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
+const WARD_ORDER = [
+  'Cachoeira do Sul',
+  'Santa Cruz do Sul Campus',
+  'Estrela',
+  'Lajeado',
+  'Marina',
+  'Rio Pardo',
+  'Santa Cruz do Sul',
+  'Venâncio Aires',
+]
+
 const CATEGORIES = [
   { label: 'Conversão e Crescimento', from: 1, to: 9 },
   { label: 'Membros / Famílias',       from: 10, to: 13 },
@@ -159,9 +170,13 @@ export default function RelatorioTrimestralPage() {
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
-  const wardNames = useMemo(() =>
-    [...new Set(indicators.filter(i => i.ward_name !== '__stake__').map(i => i.ward_name))].sort()
-  , [indicators])
+  const wardNames = useMemo(() => {
+    const available = new Set(indicators.filter(i => i.ward_name !== '__stake__').map(i => i.ward_name))
+    const ordered = WARD_ORDER.filter(w => available.has(w))
+    // Qualquer unidade fora da lista padrão vai ao final
+    const extra = [...available].filter(w => !WARD_ORDER.includes(w)).sort()
+    return [...ordered, ...extra]
+  }, [indicators])
 
   const indMap = useMemo(() => {
     const map = new Map<number, Map<string, Indicator>>()
@@ -290,18 +305,18 @@ export default function RelatorioTrimestralPage() {
           {/* ── Indicators Table ── */}
           {tab === 'indicators' && (
             <div className="overflow-x-auto">
-              <table className="w-full text-xs">
+              <table className="w-full text-xs border-collapse">
                 <thead>
-                  <tr className="bg-gray-50 text-gray-500 uppercase text-[10px]">
-                    <th className="text-left px-4 py-2 font-semibold sticky left-0 bg-gray-50 z-10 min-w-[220px]">Indicador</th>
-                    {wardNames.map(w => (
-                      <th key={w} className="text-center px-2 py-2 font-semibold min-w-[65px]" title={w}>
+                  <tr className="bg-slate-700 text-white text-[10px] uppercase">
+                    <th className="text-left px-4 py-2.5 font-semibold sticky left-0 bg-slate-700 z-10 min-w-[220px] border-r border-slate-600">Indicador</th>
+                    {wardNames.map((w, i) => (
+                      <th key={w} className={`text-center px-2 py-2.5 font-semibold min-w-[65px] border-r border-slate-600 ${i === wardNames.length - 1 ? 'border-r-2 border-r-slate-500' : ''}`} title={w}>
                         {w.split(' ')[0]}
                       </th>
                     ))}
-                    <th className="text-center px-2 py-2 font-semibold min-w-[65px] bg-sky-50/60 text-sky-700">Total</th>
-                    <th className="text-center px-2 py-2 font-semibold min-w-[75px] bg-emerald-50/60 text-emerald-700">Potencial</th>
-                    <th className="text-center px-2 py-2 font-semibold min-w-[50px] bg-violet-50/60 text-violet-700">%</th>
+                    <th className="text-center px-2 py-2.5 font-semibold min-w-[65px] bg-sky-700 border-r border-sky-600">Total</th>
+                    <th className="text-center px-2 py-2.5 font-semibold min-w-[75px] bg-emerald-700 border-r border-emerald-600">Potencial</th>
+                    <th className="text-center px-2 py-2.5 font-semibold min-w-[50px] bg-violet-700">%</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -312,11 +327,11 @@ export default function RelatorioTrimestralPage() {
                       <>
                         <tr key={`cat-${cat.label}`}>
                           <td colSpan={wardNames.length + 4}
-                            className="px-4 py-1.5 text-[10px] font-bold text-gray-500 uppercase tracking-wider bg-gray-50/80 sticky left-0">
+                            className="px-4 py-1.5 text-[10px] font-bold text-slate-600 uppercase tracking-wider bg-slate-100 border-y border-slate-200">
                             {cat.label}
                           </td>
                         </tr>
-                        {catNums.map(num => {
+                        {catNums.map((num, rowIdx) => {
                           const wardData  = indMap.get(num)
                           if (!wardData) return null
                           const stakeRow  = wardData.get('__stake__')
@@ -325,21 +340,23 @@ export default function RelatorioTrimestralPage() {
                           const pct = stakeRow?.stake_real != null && stakeRow?.stake_potential
                             ? Math.round((stakeRow.stake_real / stakeRow.stake_potential) * 100)
                             : null
+                          const isEven = rowIdx % 2 === 0
 
                           return (
-                            <tr key={num} className="border-t border-gray-50 hover:bg-gray-50/40">
+                            <tr key={num} className={`border-b border-gray-200 hover:bg-sky-50/60 transition-colors ${isEven ? 'bg-white' : 'bg-gray-50'}`}>
                               {/* Indicator name */}
-                              <td className="px-4 py-2 text-gray-700 sticky left-0 bg-white hover:bg-gray-50/40 max-w-[220px]">
+                              <td className={`px-4 py-2 text-gray-700 sticky left-0 border-r-2 border-gray-300 max-w-[220px] ${isEven ? 'bg-white' : 'bg-gray-50'} hover:bg-sky-50/60`}>
                                 <span className="text-gray-400 mr-1 tabular-nums">{num}.</span>
                                 <span className="line-clamp-2 leading-snug" title={indName}>{indName}</span>
                               </td>
 
                               {/* Ward values */}
-                              {wardNames.map(wn => {
+                              {wardNames.map((wn, colIdx) => {
                                 const row = wardData.get(wn)
                                 const eid = `ind-${row?.id}`
+                                const isLastWard = colIdx === wardNames.length - 1
                                 return (
-                                  <td key={wn} className="text-center px-1 py-1">
+                                  <td key={wn} className={`text-center px-1 py-1 border-r ${isLastWard ? 'border-r-2 border-gray-300' : 'border-gray-200'}`}>
                                     {row ? (
                                       editingId === eid && !isConfirmed ? (
                                         <input
@@ -354,7 +371,7 @@ export default function RelatorioTrimestralPage() {
                                         <button
                                           disabled={isConfirmed}
                                           onClick={() => !isConfirmed && setEditingId(eid)}
-                                          className="w-full text-center font-medium text-gray-800 hover:text-sky-700 hover:bg-sky-50 rounded px-1 py-0.5 disabled:cursor-default"
+                                          className="w-full text-center font-medium text-gray-800 hover:text-sky-700 hover:bg-sky-100 rounded px-1 py-0.5 disabled:cursor-default"
                                         >
                                           {row.value ?? '—'}
                                         </button>
@@ -365,7 +382,7 @@ export default function RelatorioTrimestralPage() {
                               })}
 
                               {/* Stake total */}
-                              <td className="text-center px-1 py-1 bg-sky-50/30">
+                              <td className="text-center px-1 py-1 bg-sky-50 border-r border-sky-200">
                                 {stakeRow ? (
                                   editingId === `stk-${stakeRow.id}` && !isConfirmed ? (
                                     <input autoFocus type="number"
@@ -386,7 +403,7 @@ export default function RelatorioTrimestralPage() {
                               </td>
 
                               {/* Potential */}
-                              <td className="text-center px-1 py-1 bg-emerald-50/30">
+                              <td className="text-center px-1 py-1 bg-emerald-50 border-r border-emerald-200">
                                 {stakeRow ? (
                                   editingId === `pot-${stakeRow.id}` && !isConfirmed ? (
                                     <input autoFocus type="number"
@@ -407,7 +424,7 @@ export default function RelatorioTrimestralPage() {
                               </td>
 
                               {/* Percentage */}
-                              <td className={`text-center px-1 py-1 bg-violet-50/30 font-bold tabular-nums ${
+                              <td className={`text-center px-1 py-1 bg-violet-50 font-bold tabular-nums ${
                                 pct == null ? 'text-gray-300'
                                   : pct >= 50 ? 'text-emerald-600'
                                   : pct >= 25 ? 'text-amber-600'
