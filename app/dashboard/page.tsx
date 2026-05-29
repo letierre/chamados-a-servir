@@ -16,6 +16,7 @@ import {
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts'
+import Link from 'next/link'
 import { buildReportPdf, safeFileName } from '../../lib/relatorios/build-pdf'
 import type { ReportConfig } from '../../lib/relatorios/build-message'
 
@@ -170,6 +171,12 @@ export default function DashboardPage() {
   const [customDateStart, setCustomDateStart] = useState('')
   const [customDateEnd, setCustomDateEnd] = useState('')
   const [showCustomDatePicker, setShowCustomDatePicker] = useState(false)
+
+  // Relatório Trimestral
+  type QtReport = { id: string; year: number; quarter: number; stake_name: string }
+  type QtIndicator = { indicator_number: number; indicator_name: string; stake_real: number | null; stake_potential: number | null }
+  const [qtReport, setQtReport]         = useState<QtReport | null>(null)
+  const [qtIndicators, setQtIndicators] = useState<QtIndicator[]>([])
 
   // Raio-X por Indicador
   const [xrayIndicatorId, setXrayIndicatorId] = useState('')
@@ -334,6 +341,33 @@ export default function DashboardPage() {
   useEffect(() => { loadTargets() }, [loadTargets])
   useEffect(() => { loadChartData() }, [loadChartData])
   useEffect(() => { setAiResult(null); setDisplayedAiResult(null) }, [selectedWardId])
+
+  // Carregar último relatório trimestral confirmado
+  useEffect(() => {
+    async function loadQt() {
+      const { data: rep } = await supabase
+        .from('quarterly_reports')
+        .select('id, year, quarter, stake_name')
+        .eq('status', 'confirmed')
+        .order('year', { ascending: false })
+        .order('quarter', { ascending: false })
+        .limit(1)
+        .single()
+      if (!rep) return
+      setQtReport(rep as QtReport)
+      const { data: inds } = await supabase
+        .from('quarterly_report_indicators')
+        .select('indicator_number, indicator_name, stake_real, stake_potential')
+        .eq('report_id', rep.id)
+        .eq('ward_name', '__stake__')
+        .not('stake_real', 'is', null)
+        .not('stake_potential', 'is', null)
+        .order('indicator_number')
+      setQtIndicators(((inds ?? []) as QtIndicator[]).filter(i => (i.stake_potential ?? 0) > 0))
+    }
+    loadQt()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Typing effect
   useEffect(() => {
@@ -998,6 +1032,69 @@ export default function DashboardPage() {
             )}
           </div>
         </section>
+
+        {/* BLOCO 6: ÚLTIMO RELATÓRIO TRIMESTRAL */}
+        {qtReport && qtIndicators.length > 0 && (
+          <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden hide-on-xray-print">
+            <div className="p-4 md:p-6 border-b border-slate-100 flex items-center justify-between gap-4 bg-slate-50/50">
+              <div className="flex items-center gap-3">
+                <div className="p-2 md:p-3 bg-sky-50 rounded-xl shrink-0">
+                  <BarChart3 className="w-5 h-5 md:w-6 md:h-6 text-sky-600" />
+                </div>
+                <div>
+                  <h2 className="text-base md:text-xl font-black text-slate-800">
+                    Relatório Trimestral — T{qtReport.quarter} {qtReport.year}
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {qtReport.stake_name} · Potencial real vs alcançado
+                  </p>
+                </div>
+              </div>
+              <Link
+                href="/analises"
+                className="text-xs font-semibold text-sky-600 hover:text-sky-800 whitespace-nowrap flex items-center gap-1 shrink-0"
+              >
+                Ver análises <TrendingUp size={13} />
+              </Link>
+            </div>
+
+            <div className="p-4 md:p-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {qtIndicators.slice(0, 9).map(ind => {
+                  const pct = ind.stake_real != null && ind.stake_potential
+                    ? Math.min(100, Math.round((ind.stake_real / ind.stake_potential) * 100))
+                    : 0
+                  const color = pct >= 50 ? 'bg-emerald-500' : pct >= 25 ? 'bg-amber-500' : 'bg-sky-400'
+                  const textColor = pct >= 50 ? 'text-emerald-700' : pct >= 25 ? 'text-amber-700' : 'text-sky-700'
+                  return (
+                    <div key={ind.indicator_number} className="bg-gray-50 rounded-2xl p-4 space-y-2">
+                      <p className="text-xs text-gray-500 leading-snug line-clamp-2" title={ind.indicator_name}>
+                        <span className="text-gray-400 mr-1">{ind.indicator_number}.</span>
+                        {ind.indicator_name}
+                      </p>
+                      <div className="flex items-end justify-between gap-2">
+                        <div>
+                          <span className="text-xl font-black text-gray-900 tabular-nums">{ind.stake_real}</span>
+                          <span className="text-xs text-gray-400 ml-1">/ {ind.stake_potential}</span>
+                        </div>
+                        <span className={`text-sm font-black tabular-nums ${textColor}`}>{pct}%</span>
+                      </div>
+                      <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                        <div className={`h-full ${color} rounded-full transition-all`} style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+              {qtIndicators.length > 9 && (
+                <p className="text-xs text-gray-400 mt-3 text-center">
+                  Mostrando 9 de {qtIndicators.length} indicadores ·{' '}
+                  <Link href="/analises" className="text-sky-600 hover:underline font-semibold">ver todos</Link>
+                </p>
+              )}
+            </div>
+          </section>
+        )}
 
         {/* FOOTER */}
         <footer className="py-8 border-t border-slate-200 text-center opacity-50 space-y-2 hide-on-xray-print">
