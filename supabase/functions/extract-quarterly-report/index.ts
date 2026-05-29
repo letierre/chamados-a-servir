@@ -10,7 +10,7 @@ const corsHeaders = {
 
 const EXTRACTION_PROMPT = `Extraia todos os dados deste Relatório Trimestral da Igreja de Jesus Cristo dos Santos dos Últimos Dias.
 
-Retorne SOMENTE um objeto JSON válido. Nenhum texto antes ou depois. Nenhum markdown.
+Retorne SOMENTE um objeto JSON válido, MINIFICADO (sem espaços, sem quebras de linha, sem indentação). Nenhum texto antes ou depois. Nenhum markdown.
 
 MAPEAMENTO DE COLUNAS (abreviações da tabela → nomes completos):
 Cach = Cachoeira do Sul
@@ -158,7 +158,7 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 12000,
+        max_tokens: 16000,
         messages: [{
           role: 'user',
           content: [
