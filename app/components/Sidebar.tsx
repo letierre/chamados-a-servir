@@ -16,6 +16,7 @@ import {
   Brain,
   X,
   BarChart3,
+  TrendingUp,
 } from 'lucide-react'
 
 type Props = {
@@ -57,8 +58,9 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: Props) {
     { name: 'Lançamentos',  path: '/lancamentos', icon: FileText },
     { name: 'Histórico',    path: '/historico',   icon: History },
     { name: 'Pendências',   path: '/pendencias',  icon: AlertTriangle, count: pendingCount },
-    { name: 'Inteligência',            path: '/inteligencia',        icon: Brain },
-    { name: 'Relatório Trimestral',   path: '/relatorio-trimestral', icon: BarChart3 },
+    { name: 'Inteligência',           path: '/inteligencia',        icon: Brain },
+    { name: 'Relatório Trimestral',  path: '/relatorio-trimestral', icon: BarChart3 },
+    { name: 'Análises',              path: '/analises',             icon: TrendingUp },
     { name: 'Relatórios Personalizáveis', path: '/relatorios',      icon: MessageSquare },
   ]
 
